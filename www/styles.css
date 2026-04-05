@@ -1,0 +1,347 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Serif:wght@400;600&display=swap");
+
+:root {
+  --ink: #0d1b1e;
+  --slate: #2f3c48;
+  --mist: #f5f2ee;
+  --accent: #f08a24;
+  --accent-soft: rgba(240, 138, 36, 0.12);
+  --sea: #0e6b6a;
+  --card: #ffffff;
+  --shadow: rgba(13, 27, 30, 0.12);
+  --shadow-strong: rgba(13, 27, 30, 0.2);
+  --border: rgba(13, 27, 30, 0.08);
+  --highlight: #fff7ec;
+}
+
+body {
+  font-family: "Space Grotesk", sans-serif;
+  background: radial-gradient(circle at top, #f9efe1 0%, #f3f6f6 38%, #e8eef4 100%);
+  color: var(--ink);
+  letter-spacing: 0.1px;
+}
+
+.app-shell {
+  max-width: 1200px;
+  margin: 32px auto 48px;
+  padding: 24px;
+  position: relative;
+}
+
+.app-shell::before,
+.app-shell::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: 260px;
+  height: 260px;
+  border-radius: 60px;
+  filter: blur(0.5px);
+  opacity: 0.75;
+}
+
+.app-shell::before {
+  top: -40px;
+  right: 6%;
+  background: radial-gradient(circle, #ffe1c4 0%, rgba(255, 225, 196, 0) 70%);
+}
+
+.app-shell::after {
+  bottom: -60px;
+  left: 3%;
+  background: radial-gradient(circle, #cfe9e5 0%, rgba(207, 233, 229, 0) 72%);
+}
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 28px;
+  border-radius: 24px;
+  background: linear-gradient(130deg, #fff8ef, #e6f2ee);
+  box-shadow: 0 22px 38px -26px var(--shadow-strong);
+  animation: lift 0.6s ease-out;
+}
+
+.title-block h1 {
+  font-size: 2.35rem;
+  margin-bottom: 8px;
+  font-weight: 700;
+}
+
+.title-block p {
+  font-family: "IBM Plex Serif", serif;
+  color: var(--slate);
+  max-width: 520px;
+}
+
+.badge-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: center;
+}
+
+.badge {
+  background: #f0fbf7;
+  color: #0e5a59;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: 1px solid rgba(14, 107, 106, 0.15);
+}
+
+.app-body {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.9fr) minmax(420px, 1.1fr);
+  gap: 24px;
+  margin-top: 28px;
+}
+
+.panel {
+  background: var(--card);
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: 0 24px 44px -32px var(--shadow-strong);
+  animation: fadeIn 0.5s ease-out;
+  border: 1px solid var(--border);
+}
+
+.panel h2 {
+  font-size: 1.4rem;
+  margin-bottom: 16px;
+}
+
+.panel h3 {
+  font-size: 1.05rem;
+  margin: 0 0 10px;
+  color: var(--slate);
+  letter-spacing: 0.2px;
+}
+
+.panel-input {
+  background: linear-gradient(180deg, #fffdf9 0%, #ffffff 100%);
+}
+
+.panel-output {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbfb 100%);
+}
+
+.primary-btn {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 10px 18px;
+  border-radius: 12px;
+  font-weight: 600;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  letter-spacing: 0.2px;
+}
+
+.primary-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 18px -12px var(--shadow);
+}
+
+.hint {
+  margin-top: 12px;
+  font-size: 0.9rem;
+  color: var(--slate);
+}
+
+.gap-card,
+.action-card {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid #edf1f2;
+  margin-bottom: 14px;
+  background: #fbfbfb;
+}
+
+.gap-card h3,
+.action-card h3 {
+  margin-top: 0;
+  margin-bottom: 6px;
+  font-size: 1.05rem;
+}
+
+.app-footer {
+  margin-top: 32px;
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  color: var(--slate);
+  font-size: 0.85rem;
+}
+
+/* Input organization */
+.panel-section {
+  padding: 16px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 24px -20px var(--shadow);
+  margin-bottom: 14px;
+}
+
+.section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.cta-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.cta-row .primary-btn {
+  align-self: flex-start;
+}
+
+/* Tabs shell */
+.tabs-shell {
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 12px 14px 18px;
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 34px -28px var(--shadow);
+}
+
+/* Inputs */
+.form-control,
+.selectize-input,
+.selectize-input.focus {
+  border-radius: 12px !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: none !important;
+  background: #ffffff !important;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-control:focus,
+.selectize-input.focus {
+  border-color: rgba(14, 107, 106, 0.4) !important;
+  box-shadow: 0 0 0 3px rgba(14, 107, 106, 0.12) !important;
+}
+
+textarea.form-control {
+  min-height: 180px;
+}
+
+label {
+  font-size: 0.92rem;
+  color: var(--slate);
+  letter-spacing: 0.1px;
+}
+
+/* Checkbox group layout */
+.checkbox {
+  margin-top: 6px;
+}
+
+.checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Tabs */
+.nav-tabs {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 18px;
+}
+
+.nav-tabs > li > a {
+  color: var(--slate);
+  border-radius: 12px 12px 0 0;
+  border: 1px solid transparent;
+  padding: 10px 14px;
+  transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+}
+
+.nav-tabs > li.active > a,
+.nav-tabs > li.active > a:focus,
+.nav-tabs > li.active > a:hover {
+  background: var(--highlight);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-bottom-color: transparent;
+}
+
+.nav-tabs > li > a:hover {
+  background: #f7f3ed;
+  border: 1px solid var(--border);
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.95rem;
+}
+
+table th {
+  text-align: left;
+  background: #f4f6f8;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef1f4;
+}
+
+table tr:last-child td {
+  border-bottom: none;
+}
+
+table tr:hover td {
+  background: #f9fbfb;
+}
+
+@media (max-width: 980px) {
+  .app-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes lift {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 720px) {
+  .app-header {
+    flex-direction: column;
+  }
+
+  .badge-block {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}

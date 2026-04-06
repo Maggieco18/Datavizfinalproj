@@ -1,11 +1,19 @@
+get_env_nonempty <- function(name, fallback = "") {
+  value <- Sys.getenv(name, unset = "")
+  if (!nzchar(value)) return(fallback)
+  lower <- tolower(value)
+  if (lower %in% c("none", "null", "nil", "na")) return(fallback)
+  value
+}
+
 app_config <- list(
-  llm_provider = Sys.getenv("LLM_PROVIDER", unset = "openai_compatible"),
-  llm_api_base = Sys.getenv("LLM_API_BASE", unset = ""),
-  llm_api_key = Sys.getenv("LLM_API_KEY", unset = ""),
-  llm_model = Sys.getenv("LLM_MODEL", unset = "gpt-4.1-mini"),
-  llm_temperature = as.numeric(Sys.getenv("LLM_TEMPERATURE", unset = "0.2")),
-  llm_timeout = as.numeric(Sys.getenv("LLM_TIMEOUT", unset = "60")),
-  cdc_app_token = Sys.getenv("CDC_APP_TOKEN", unset = "")
+  llm_provider = get_env_nonempty("LLM_PROVIDER", "openai_compatible"),
+  llm_api_base = get_env_nonempty("LLM_API_BASE", get_env_nonempty("LITELLM_API_BASE", "https://litellm.oit.duke.edu")),
+  llm_api_key = get_env_nonempty("LLM_API_KEY", get_env_nonempty("LITELLM_API_KEY", "")),
+  llm_model = get_env_nonempty("LLM_MODEL", get_env_nonempty("LITELLM_MODEL", "gpt-5-mini")),
+  llm_temperature = as.numeric(get_env_nonempty("LLM_TEMPERATURE", "0.2")),
+  llm_timeout = as.numeric(get_env_nonempty("LLM_TIMEOUT", "60")),
+  cdc_app_token = get_env_nonempty("CDC_APP_TOKEN", "")
 )
 
 fema_guidance <- list(
@@ -116,6 +124,187 @@ preparedness_framework <- list(
         "Exercises, after-action review, and updates"
       ),
       fema_alignment = c("Planning")
+    )
+  )
+)
+
+cdc_phep_capabilities <- list(
+  list(
+    id = "community_preparedness",
+    label = "Community Preparedness",
+    keywords = c("community preparedness", "stakeholder engagement", "partnerships", "public outreach")
+  ),
+  list(
+    id = "community_recovery",
+    label = "Community Recovery",
+    keywords = c("recovery", "continuity", "restoration", "reconstitution")
+  ),
+  list(
+    id = "emergency_operations_coordination",
+    label = "Emergency Operations Coordination",
+    keywords = c("incident command", "ics", "eoc", "coordination", "situational awareness")
+  ),
+  list(
+    id = "emergency_public_information",
+    label = "Emergency Public Information and Warning",
+    keywords = c("public information", "risk communication", "media", "warning", "alert")
+  ),
+  list(
+    id = "fatality_management",
+    label = "Fatality Management",
+    keywords = c("fatality", "mortuary", "decedent", "remains")
+  ),
+  list(
+    id = "information_sharing",
+    label = "Information Sharing",
+    keywords = c("information sharing", "data sharing", "situational report", "sitrep")
+  ),
+  list(
+    id = "mass_care",
+    label = "Mass Care",
+    keywords = c("shelter", "mass care", "congregate care", "feeding")
+  ),
+  list(
+    id = "medical_countermeasure_dispensing",
+    label = "Medical Countermeasure Dispensing",
+    keywords = c("countermeasure", "dispensing", "pod", "medication distribution")
+  ),
+  list(
+    id = "medical_materials_management",
+    label = "Medical Materiel Management and Distribution",
+    keywords = c("medical supply", "inventory", "logistics", "distribution")
+  ),
+  list(
+    id = "medical_surge",
+    label = "Medical Surge",
+    keywords = c("surge capacity", "bed capacity", "staffing surge", "alternate care")
+  ),
+  list(
+    id = "non_pharmaceutical_interventions",
+    label = "Non-Pharmaceutical Interventions",
+    keywords = c("isolation", "quarantine", "social distancing", "masking")
+  ),
+  list(
+    id = "public_health_law",
+    label = "Public Health Law",
+    keywords = c("legal authority", "emergency powers", "orders", "waiver")
+  ),
+  list(
+    id = "responder_safety",
+    label = "Responder Safety and Health",
+    keywords = c("responder safety", "ppe", "occupational health", "safety protocols")
+  ),
+  list(
+    id = "volunteer_management",
+    label = "Volunteer Management",
+    keywords = c("volunteer", "mrc", "credentialing", "just-in-time training")
+  ),
+  list(
+    id = "surveillance_epidemiology",
+    label = "Surveillance and Epidemiology Investigation",
+    keywords = c("surveillance", "case investigation", "contact tracing", "epidemiology")
+  )
+)
+
+who_erf_domains <- list(
+  list(
+    id = "risk_assessment",
+    label = "Risk Assessment",
+    keywords = c("risk assessment", "hazard analysis", "vulnerability", "threat")
+  ),
+  list(
+    id = "incident_management",
+    label = "Incident Management",
+    keywords = c("incident management", "ics", "eoc", "coordination", "command")
+  ),
+  list(
+    id = "operations",
+    label = "Operations",
+    keywords = c("operations", "response", "field teams", "implementation")
+  ),
+  list(
+    id = "logistics",
+    label = "Logistics",
+    keywords = c("logistics", "supply chain", "procurement", "distribution")
+  ),
+  list(
+    id = "communications",
+    label = "Communications",
+    keywords = c("risk communication", "media", "public information", "alerts")
+  ),
+  list(
+    id = "planning_monitoring",
+    label = "Planning and Monitoring",
+    keywords = c("planning", "monitoring", "evaluation", "after-action")
+  ),
+  list(
+    id = "health_services",
+    label = "Health Services",
+    keywords = c("clinical care", "treatment", "medical services", "case management")
+  )
+)
+
+framework_domain_map <- list(
+  cdc_phep = list(
+    Command = c(
+      "Emergency Operations Coordination",
+      "Information Sharing",
+      "Public Health Law"
+    ),
+    Communication = c(
+      "Emergency Public Information and Warning",
+      "Community Preparedness",
+      "Information Sharing"
+    ),
+    Operations = c(
+      "Medical Surge",
+      "Medical Countermeasure Dispensing",
+      "Non-Pharmaceutical Interventions",
+      "Surveillance and Epidemiology Investigation"
+    ),
+    Logistics = c(
+      "Medical Materiel Management and Distribution",
+      "Mass Care",
+      "Fatality Management",
+      "Community Recovery"
+    )
+  ),
+  fema = list(
+    Command = c(
+      "Planning",
+      "Operational Coordination",
+      "Public Information and Warning"
+    ),
+    Communication = c(
+      "Public Information and Warning",
+      "Operational Coordination"
+    ),
+    Operations = c(
+      "Mass Care Services",
+      "Situational Assessment",
+      "Environmental Response/Health and Safety"
+    ),
+    Logistics = c(
+      "Logistics and Supply Chain Management",
+      "Infrastructure Systems",
+      "Supply Chain Integrity and Security"
+    )
+  ),
+  who_erf = list(
+    Command = c(
+      "Incident Management",
+      "Planning and Monitoring",
+      "Risk Assessment"
+    ),
+    Communication = c(
+      "Communications"
+    ),
+    Operations = c(
+      "Operations",
+      "Health Services"
+    ),
+    Logistics = c(
+      "Logistics"
     )
   )
 )

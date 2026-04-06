@@ -80,6 +80,13 @@ ui <- fluidPage(
           h3("Region Settings"),
           div(
             class = "section-grid",
+            selectizeInput(
+              "region_country",
+              "Country",
+              choices = c("United States", "Canada", "Mexico", "United Kingdom", "Australia", "India", "Other"),
+              options = list(create = TRUE, placeholder = "Start typing a country"),
+              selected = "United States"
+            ),
             selectInput(
               "region_state",
               "Region (State/Territory)",
@@ -129,38 +136,51 @@ ui <- fluidPage(
             type = "tabs",
             tabPanel(
               "Scorecard",
+              div(
+                class = "scorecard-meta",
+                div(
+                  class = "scorecard-scale",
+                  strong("Score scale: "),
+                  "80–100 = Low Risk, 50–79 = Moderate Risk, 0–49 = High Risk"
+                ),
+                uiOutput("framework_note"),
+                uiOutput("llm_status"),
+                uiOutput("framework_picker"),
+                div(
+                  class = "scorecard-links",
+                  span("Domain details are listed below.")
+                )
+              ),
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(tableOutput("scorecard"))
               } else {
                 tableOutput("scorecard")
-              }
+              },
+              uiOutput("framework_details")
             ),
             tabPanel(
-              "Gap Analysis",
+              "Insights",
+              h3("Executive Summary"),
+              if (has_shinycssloaders) {
+                shinycssloaders::withSpinner(uiOutput("exec_summary"))
+              } else {
+                uiOutput("exec_summary")
+              },
+              h3("Key Gaps"),
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(uiOutput("gap_list"))
               } else {
                 uiOutput("gap_list")
-              }
-            ),
-            tabPanel(
-              "Action Plan",
+              },
+              h3("Action Plan"),
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(uiOutput("action_plan"))
               } else {
                 uiOutput("action_plan")
               }
             ),
-          tabPanel(
-            "Executive Summary",
-            if (has_shinycssloaders) {
-              shinycssloaders::withSpinner(uiOutput("exec_summary"))
-            } else {
-              uiOutput("exec_summary")
-            }
-          ),
-          tabPanel(
-            "Regional Context",
+            tabPanel(
+              "Regional Context",
               h3("FEMA Incident Patterns"),
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(tableOutput("fema_table"))
@@ -223,6 +243,7 @@ server <- function(input, output, session) {
       plan_text = plan_text,
       facility_type = input$facility_type,
       emergency_focus = input$emergency_focus,
+      region_country = input$region_country,
       region_state = input$region_state,
       region_county = input$region_county,
       history_years = input$history_years,
@@ -235,6 +256,7 @@ server <- function(input, output, session) {
       if (is.null(input$plan_file)) "" else input$plan_file$datapath,
       input$facility_type,
       input$emergency_focus,
+      input$region_country,
       input$region_state,
       input$region_county,
       input$history_years,
@@ -244,18 +266,124 @@ server <- function(input, output, session) {
     bindEvent(input$run_analysis, ignoreInit = TRUE)
 
   observeEvent(input$region_state, {
-    county_choices <- get_county_choices(input$region_state)
-    county_choices <- c("Not applicable", county_choices)
-    updateSelectizeInput(
-      session,
-      "region_county",
-      choices = county_choices,
-      server = TRUE
-    )
+    if (!is.null(input$region_country) && tolower(input$region_country) == "united states") {
+      county_choices <- get_county_choices(input$region_state)
+      county_choices <- c("Not applicable", county_choices)
+      updateSelectizeInput(
+        session,
+        "region_county",
+        choices = county_choices,
+        server = TRUE
+      )
+    } else {
+      updateSelectizeInput(
+        session,
+        "region_county",
+        choices = c("Not applicable"),
+        server = TRUE
+      )
+    }
   })
 
   output$scorecard <- renderTable({
     analysis_result()$scorecard
+  })
+
+  output$framework_note <- renderUI({
+    country <- input$region_country %||% "United States"
+    llm_note <- if (!is.null(app_config$llm_api_key) &&
+      nzchar(app_config$llm_api_key) &&
+      !is.null(app_config$llm_api_base) &&
+      nzchar(app_config$llm_api_base)) {
+      paste0(" Scoring uses an LLM rubric-based review of plan strength (model: ", app_config$llm_model, ").")
+    } else {
+      " Scoring uses rule-based signals from the plan text."
+    }
+    if (tolower(country) != "united states") {
+      tags$p(
+        class = "hint",
+        paste0("Scorecard uses the 4-domain model. Framework mapping shown below uses WHO ERF for non-U.S. plans.", llm_note)
+      )
+    } else {
+      applicability <- if (input$facility_type %in% c("Public Health Department", "Emergency Management Agency")) {
+        ""
+      } else {
+        " Note: CDC PHEP is designed for public health agencies; applicability may be limited for other facility types."
+      }
+      tags$p(
+        class = "hint",
+        paste0("Scorecard uses the 4-domain model. Framework mapping shown below uses CDC PHEP or FEMA core capabilities.", applicability, llm_note)
+      )
+    }
+  })
+
+  output$llm_status <- renderUI({
+    status <- analysis_result()$llm
+    if (is.null(status)) return(NULL)
+    if (isTRUE(status$used)) {
+      tags$p(class = "hint", paste("LLM status: successful rubric-based review (model:", app_config$llm_model, ")."))
+    } else if (!is.null(status$error) && nzchar(status$error)) {
+      tags$p(class = "hint", paste("LLM status: fallback to rule-based (model:", app_config$llm_model, "). Error:", status$error))
+    } else {
+      tags$p(class = "hint", paste("LLM status: fallback to rule-based (model:", app_config$llm_model, "). No LLM response."))
+    }
+  })
+
+  output$framework_picker <- renderUI({
+    non_us <- !is.null(input$region_country) && tolower(input$region_country) != "united states"
+    if (non_us) {
+      tagList(
+        tags$p(class = "hint", "Framework mapping is fixed to WHO ERF for non-U.S. plans."),
+        tags$input(type = "hidden", id = "framework_view", value = "WHO ERF"),
+        selectInput(
+          "domain_view",
+          "Domain",
+          choices = c("Command", "Communication", "Operations", "Logistics"),
+          selected = "Command"
+        )
+      )
+    } else {
+      tagList(
+        selectInput(
+          "framework_view",
+          "Framework mapping",
+          choices = c("CDC PHEP", "FEMA"),
+          selected = "CDC PHEP"
+        ),
+        selectInput(
+          "domain_view",
+          "Domain",
+          choices = c("Command", "Communication", "Operations", "Logistics"),
+          selected = "Command"
+        )
+      )
+    }
+  })
+
+  output$framework_details <- renderUI({
+    framework_key <- if (!is.null(input$framework_view) && input$framework_view == "WHO ERF") {
+      "who_erf"
+    } else if (!is.null(input$framework_view) && input$framework_view == "FEMA") {
+      "fema"
+    } else {
+      "cdc_phep"
+    }
+    domain_key <- input$domain_view %||% "Command"
+    mapping <- framework_domain_map[[framework_key]] %||% list()
+    categories <- mapping[[domain_key]] %||% character(0)
+
+    tags$div(
+      class = "scorecard-details",
+      tags$div(
+        class = "framework-card",
+        h3(paste(domain_key, "mapping")),
+        if (length(categories) > 0) {
+          tags$ul(lapply(categories, tags$li))
+        } else {
+          tags$p("No mapped categories available.")
+        }
+      )
+    )
   })
 
   output$gap_list <- renderUI({
@@ -267,8 +395,14 @@ server <- function(input, output, session) {
   })
 
   output$exec_summary <- renderUI({
-    summary <- analysis_result()$executive_summary
-    tags$p(summary)
+    format_exec_summary_narrative(
+      facility_type = input$facility_type,
+      emergency_focus = input$emergency_focus,
+      final_score = analysis_result()$final_score,
+      scorecard = analysis_result()$scorecard,
+      gaps = analysis_result()$gaps,
+      actions = analysis_result()$action_plan
+    )
   })
 
   output$fema_table <- renderTable({

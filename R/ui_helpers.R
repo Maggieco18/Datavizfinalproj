@@ -4,12 +4,17 @@ format_gap_list <- function(gaps) {
   }
 
   if (is.character(gaps)) {
+    detail_map <- c(
+      "No Incident Command System defined" = "No ICS/incident command structure was detected in the plan text (e.g., command roles, chain of command, activation authority).",
+      "Insufficient training and drills" = "Training and exercise references appear minimal (fewer than two mentions), suggesting limited preparedness cadence.",
+      "No backup power system identified" = "No backup power or generator capability was identified in the plan text."
+    )
     return(tagList(
       lapply(gaps, function(gap) {
         div(
           class = "gap-card",
           h3(gap),
-          p("Flagged by deterministic rule checks.")
+          p(detail_map[[gap]] %||% "Flagged because the plan text did not contain the expected indicators for this requirement.")
         )
       })
     ))
@@ -26,6 +31,126 @@ format_gap_list <- function(gaps) {
       )
     })
   )
+}
+
+join_items <- function(items) {
+  items <- items[nzchar(items)]
+  n <- length(items)
+  if (n == 0) return("")
+  if (n == 1) return(items[1])
+  if (n == 2) return(paste(items[1], "and", items[2]))
+  paste0(paste(items[1:(n - 1)], collapse = ", "), ", and ", items[n])
+}
+
+format_exec_summary_narrative <- function(
+  facility_type,
+  emergency_focus,
+  final_score,
+  scorecard,
+  gaps,
+  actions
+) {
+  top_domain <- "N/A"
+  lowest_domain <- "N/A"
+  if (!is.null(scorecard) && nrow(scorecard) > 0 && "score" %in% names(scorecard)) {
+    top_domain <- scorecard |>
+      arrange(desc(score)) |>
+      slice_head(n = 1) |>
+      pull(domain)
+    lowest_domain <- scorecard |>
+      arrange(score) |>
+      slice_head(n = 1) |>
+      pull(domain)
+  }
+
+  score_text <- if (!is.null(final_score)) {
+    paste0("the overall preparedness score is ", round(final_score, 1))
+  } else {
+    "the overall preparedness score is unavailable"
+  }
+
+  base_sentence <- paste0(
+    "For the ", facility_type, " with a ", tolower(emergency_focus),
+    " emergency focus, ", score_text, ", indicating that ",
+    if (!is.null(final_score) && final_score >= 80) {
+      "current preparedness is strong."
+    } else if (!is.null(final_score) && final_score >= 50) {
+      "there are moderate improvement needs."
+    } else if (!is.null(final_score)) {
+      "substantial improvement is needed."
+    } else {
+      "an overall assessment could not be completed."
+    }
+  )
+
+  domain_sentence <- paste0(
+    if (!is.na(top_domain) && top_domain != "N/A") {
+      paste0(" The strongest area is ", top_domain, ".")
+    } else {
+      ""
+    },
+    if (!is.na(lowest_domain) && lowest_domain != "N/A") {
+      paste0(" The area needing the most improvement is ", lowest_domain, ".")
+    } else {
+      ""
+    }
+  )
+
+  gap_sentence <- NULL
+  if (length(gaps) == 0) {
+    gap_sentence <- "No major gaps were identified based on the current rule checks."
+  } else if (is.character(gaps)) {
+    detail_map <- c(
+      "No Incident Command System defined" = "This suggests leadership roles and activation authority are unclear, which can slow decision-making during escalation.",
+      "Insufficient training and drills" = "This raises the risk of role confusion and inconsistent execution during a real event.",
+      "No backup power system identified" = "This creates vulnerability for critical operations, IT systems, and life-safety equipment during outages."
+    )
+    sentences <- vapply(
+      gaps,
+      function(gap) {
+        detail <- detail_map[[gap]]
+        if (is.null(detail)) {
+          detail <- "This indicates a weakness that could hinder coordinated response."
+        }
+        paste0(gap, ". ", detail)
+      },
+      character(1)
+    )
+    gap_sentence <- paste0("Key gaps include: ", paste(sentences, collapse = " "))
+  } else {
+    sentences <- vapply(
+      gaps,
+      function(gap) {
+        domain <- gap$domain %||% "Domain"
+        status <- gap$status %||% "unknown status"
+        evidence <- gap$evidence %||% "limited evidence"
+        components <- gap$components %||% character(0)
+        component_text <- if (length(components) > 0) {
+          paste0(" Components to strengthen: ", paste(components, collapse = ", "), ".")
+        } else {
+          ""
+        }
+        paste0(domain, " is currently ", status, ". Evidence includes ", evidence, ".", component_text)
+      },
+      character(1)
+    )
+    gap_sentence <- paste0("Key gaps include: ", paste(sentences, collapse = " "))
+  }
+
+  action_sentence <- NULL
+  if (length(actions) == 0) {
+    action_sentence <- "No immediate corrective actions were triggered by the rule set."
+  } else if (is.character(actions)) {
+    action_sentence <- paste0("Immediate priorities are to ", join_items(actions), ".")
+  } else {
+    action_sentence <- paste0(
+      "Immediate priorities are to ",
+      join_items(vapply(actions, function(a) a$recommendation %||% "", character(1))),
+      "."
+    )
+  }
+
+  tags$p(paste(base_sentence, domain_sentence, gap_sentence, action_sentence))
 }
 
 format_action_plan <- function(actions) {

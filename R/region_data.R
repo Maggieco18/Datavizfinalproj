@@ -14,12 +14,14 @@ fetch_json <- function(url, query = list(), headers = list(), timeout_seconds = 
   )
 
   if (httr::http_error(response)) {
-    stop("Request failed: HTTP ", httr::status_code(response))
+    resp_url <- response$url %||% url
+    stop("Request failed: HTTP ", httr::status_code(response), " for ", resp_url)
   }
 
   content_type <- httr::headers(response)[["content-type"]] %||% ""
   if (!str_detect(tolower(content_type), "application/json")) {
-    stop("Request failed: non-JSON response received.")
+    resp_url <- response$url %||% url
+    stop("Request failed: non-JSON response received from ", resp_url, ".")
   }
 
   httr::content(response, as = "parsed", type = "application/json")
@@ -170,17 +172,26 @@ fetch_fema_disasters <- function(
 ) {
   start_date <- as.Date(Sys.Date()) - years_back * 365
   base_urls <- c(
-    "https://www.fema.gov/api/open/v1/DisasterDeclarationsSummaries",
-    "https://www.fema.gov/api/open/v2/DisasterDeclarationsSummaries"
+    "https://www.fema.gov/api/open/v1/FemaWebDisasterDeclarations"
   )
 
   filter_parts <- c(
-    "state eq '", state_code, "' and declarationDate ge '",
+    "stateCode eq '", state_code, "' and declarationDate ge '",
     format(start_date, "%Y-%m-%d"), "'"
   )
 
   if (!is.null(disaster_types) && length(disaster_types) > 0) {
-    type_filter <- paste0("disasterType in ('", paste(disaster_types, collapse = "','"), "')")
+    declaration_types <- vapply(
+      disaster_types,
+      function(x) {
+        if (x == "DR") return("Major Disaster")
+        if (x == "EM") return("Emergency")
+        if (x == "FM") return("Fire Management")
+        x
+      },
+      character(1)
+    )
+    type_filter <- paste0("declarationType in ('", paste(declaration_types, collapse = "','"), "')")
     filter_parts <- c(filter_parts, " and ", type_filter)
   }
 
@@ -193,16 +204,29 @@ fetch_fema_disasters <- function(
 
   query <- list(
     "$filter" = filter,
-    "$select" = "disasterNumber,disasterType,incidentType,declarationDate,state,declaredCountyArea,incidentBeginDate,incidentEndDate",
+    "$select" = paste(
+      c(
+        "disasterNumber",
+        "disasterName",
+        "declarationType",
+        "incidentType",
+        "declarationDate",
+        "stateCode",
+        "stateName",
+        "incidentBeginDate",
+        "incidentEndDate"
+      ),
+      collapse = ","
+    ),
     "$orderby" = "declarationDate desc",
     "$top" = "1000"
   )
 
   records <- list()
-  next_url <- base_url
   page_count <- 0
   max_pages <- 10
   error_note <- NULL
+  last_error <- NULL
   headers <- list(
     "User-Agent" = "datavizfinalproject (shiny app)",
     "Accept" = "application/json"
@@ -213,16 +237,22 @@ fetch_fema_disasters <- function(
     next_url <- base_url
     page_count <- 0
     query_local <- query
+    had_response <- FALSE
+    last_error_local <- NULL
 
     repeat {
       page_count <- page_count + 1
       response <- tryCatch(
         fetch_json(next_url, query = query_local, headers = headers),
-        error = function(e) NULL
+        error = function(e) {
+          last_error_local <<- conditionMessage(e)
+          NULL
+        }
       )
       if (is.null(response)) break
 
-      batch <- response$DisasterDeclarationsSummaries %||% list()
+      had_response <- TRUE
+      batch <- response$FemaWebDisasterDeclarations %||% list()
       records <- c(records, batch)
 
       next_url <- response$metadata$`next`
@@ -231,17 +261,24 @@ fetch_fema_disasters <- function(
       if (is.null(next_url) || page_count >= max_pages) break
     }
 
-    records
+    list(records = records, had_response = had_response, last_error = last_error_local)
   }
 
   records <- list()
+  had_response_any <- FALSE
   for (base_url in base_urls) {
-    records <- fetch_with_base(base_url)
-    if (length(records) > 0) break
+    result <- fetch_with_base(base_url)
+    records <- result$records
+    had_response_any <- result$had_response
+    last_error <- result$last_error
+    if (had_response_any) break
   }
 
-  if (length(records) == 0) {
-    error_note <- "FEMA data temporarily unavailable."
+  if (!had_response_any) {
+    error_note <- paste(
+      "FEMA data temporarily unavailable.",
+      if (!is.null(last_error)) paste0("(", last_error, ")") else NULL
+    )
   }
 
   if (length(records) == 0) {
@@ -250,23 +287,42 @@ fetch_fema_disasters <- function(
     return(out)
   }
 
-  df <- tibble::as_tibble(records)
+  df <- dplyr::bind_rows(records)
 
   if (!is.null(county) && nzchar(county) && tolower(county) != "not applicable") {
-    county_norm <- normalize_county_name(county)
-    df <- df |>
-      filter(!is.na(declaredCountyArea)) |>
-      mutate(
-        declaredCountyNorm = declaredCountyArea |>
-          tolower() |>
-          str_replace_all("\\s+county$", "") |>
-          str_replace_all("\\s+parish$", "") |>
-          str_replace_all("\\s+borough$", "") |>
-          str_replace_all("\\s+census area$", "") |>
-          str_replace_all("\\s+", " ") |>
-          str_trim()
-      ) |>
-      filter(str_detect(declaredCountyNorm, fixed(county_norm)))
+    if ("declaredCountyArea" %in% names(df)) {
+      county_norm <- normalize_county_name(county)
+      df <- df |>
+        filter(!is.na(declaredCountyArea)) |>
+        mutate(
+          declaredCountyNorm = declaredCountyArea |>
+            tolower() |>
+            str_replace_all("\\s+county$", "") |>
+            str_replace_all("\\s+parish$", "") |>
+            str_replace_all("\\s+borough$", "") |>
+            str_replace_all("\\s+census area$", "") |>
+            str_replace_all("\\s+", " ") |>
+            str_trim()
+        ) |>
+        filter(str_detect(declaredCountyNorm, fixed(county_norm)))
+    } else if ("designatedArea" %in% names(df)) {
+      county_norm <- normalize_county_name(county)
+      df <- df |>
+        filter(!is.na(designatedArea)) |>
+        mutate(
+          designatedAreaNorm = designatedArea |>
+            tolower() |>
+            str_replace_all("\\s+county$", "") |>
+            str_replace_all("\\s+parish$", "") |>
+            str_replace_all("\\s+borough$", "") |>
+            str_replace_all("\\s+census area$", "") |>
+            str_replace_all("\\s+", " ") |>
+            str_trim()
+        ) |>
+        filter(str_detect(designatedAreaNorm, fixed(county_norm)))
+    } else {
+      attr(df, "note") <- "FEMA disaster declarations on fema.gov are filtered at the state level; county filtering is not available for this dataset."
+    }
   }
 
   attr(df, "note") <- error_note
@@ -811,6 +867,7 @@ build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, nws
 }
 
 build_regional_analysis <- function(
+  region_country,
   region_state,
   region_county,
   history_years,
@@ -818,6 +875,18 @@ build_regional_analysis <- function(
   fema_types = c("DR", "EM"),
   incident_types = character(0)
 ) {
+  if (!is.null(region_country) && tolower(region_country) != "united states") {
+    note <- "Regional data sources are currently US-only (FEMA, CDC, NWS)."
+    empty <- list(table = tibble::tibble(), note = note)
+    return(list(
+      fema = empty,
+      cdc = empty,
+      nws = empty,
+      weather = empty,
+      coverage = tibble::tibble()
+    ))
+  }
+
   fema_note <- NULL
   fema_df <- tryCatch(
     fetch_fema_disasters(

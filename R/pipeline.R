@@ -153,6 +153,7 @@ run_full_analysis <- function(
   plan_text,
   facility_type,
   emergency_focus,
+  region_country,
   region_state,
   region_county,
   history_years,
@@ -162,13 +163,41 @@ run_full_analysis <- function(
   cleaned_text <- preprocess_text(plan_text)
   features <- extract_features(cleaned_text)
 
+  llm_assessment <- NULL
+  llm_error <- NULL
   domain_scores <- score_domains(features)
   weights <- get_weights(emergency_focus)
   final_score <- compute_final_score(domain_scores, weights)
+
+  if (!is.null(app_config$llm_api_key) &&
+      nzchar(app_config$llm_api_key) &&
+      !is.null(app_config$llm_api_base) &&
+      nzchar(app_config$llm_api_base)) {
+    llm_assessment <- tryCatch(
+      assess_plan_domains(plan_text, facility_type, emergency_focus),
+      error = function(e) {
+        llm_error <<- conditionMessage(e)
+        NULL
+      }
+    )
+
+    if (!is.null(llm_assessment$domains) && length(llm_assessment$domains) > 0) {
+      domain_scores <- llm_domains_to_scorecard(llm_assessment$domains)
+      final_score <- mean(domain_scores$score)
+    }
+  }
+
   scorecard <- build_scorecard(domain_scores)
 
   gaps <- detect_gaps(features)
   actions <- generate_actions(gaps)
+
+  if (!is.null(llm_assessment$domains) && length(llm_assessment$domains) > 0) {
+    gaps <- llm_domains_to_gaps(llm_assessment$domains)
+  }
+  if (!is.null(llm_assessment$recommended_actions) && length(llm_assessment$recommended_actions) > 0) {
+    actions <- llm_actions_to_plan(llm_assessment$recommended_actions)
+  }
 
   executive_summary_base <- build_executive_summary_base(
     facility_type,
@@ -191,6 +220,7 @@ run_full_analysis <- function(
 
   domain_status <- build_domain_status(cleaned_text)
   regional_analysis <- build_regional_analysis(
+    region_country,
     region_state,
     region_county,
     history_years,
@@ -207,6 +237,10 @@ run_full_analysis <- function(
     gaps = gaps,
     action_plan = actions,
     executive_summary = executive_summary,
+    llm = list(
+      used = !is.null(llm_assessment$domains) && length(llm_assessment$domains) > 0,
+      error = llm_error
+    ),
     regional = list(
       fema = regional_analysis$fema,
       cdc = regional_analysis$cdc,

@@ -5,8 +5,19 @@ call_llm_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
     return(mock_llm_response(schema_hint))
   }
 
+  base_url <- sub("/v1/?$", "", app_config$llm_api_base)
+
+  model_name <- app_config$llm_model
+  if (is.null(model_name) ||
+      length(model_name) == 0 ||
+      is.na(model_name) ||
+      !nzchar(model_name) ||
+      tolower(model_name) %in% c("none", "null", "nil", "na")) {
+    model_name <- "gpt-5-mini"
+  }
+
   request_body <- list(
-    model = app_config$llm_model,
+    model = model_name,
     temperature = app_config$llm_temperature,
     messages = list(
       list(role = "system", content = system_prompt),
@@ -15,7 +26,7 @@ call_llm_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
   )
 
   response <- POST(
-    url = paste0(app_config$llm_api_base, "/v1/chat/completions"),
+    url = paste0(base_url, "/v1/chat/completions"),
     add_headers(Authorization = paste("Bearer", app_config$llm_api_key)),
     encode = "json",
     body = request_body,
@@ -31,11 +42,32 @@ call_llm_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
   safe_parse_json(message_content, schema_hint = schema_hint)
 }
 
+assess_plan_domains <- function(plan_text, facility_type, emergency_focus) {
+  prompt <- paste(
+    "You are an emergency preparedness reviewer.",
+    "Evaluate the plan using four domains: Command, Communication, Operations, Logistics.",
+    "Score each domain on a 1–5 scale (1=Absent, 2=Weak, 3=Partial, 4=Strong, 5=Very Strong).",
+    "Provide short evidence snippets and a brief rationale for each domain.",
+    "List the top gaps and recommended actions.",
+    "Return JSON only in the schema:",
+    "{\"domains\":[{\"id\":\"command\",\"label\":\"Command\",\"score\":1-5,\"evidence\":\"...\",\"rationale\":\"...\",\"gaps\":[\"...\"],\"strengths\":[\"...\"]}],\"overall_summary\":\"...\",\"recommended_actions\":[{\"domain_id\":\"command\",\"priority\":\"High|Medium|Low\",\"timeframe\":\"Immediate|Short-Term|Long-Term\",\"recommendation\":\"...\"}]}",
+    "\nFacility type:", facility_type,
+    "\nEmergency focus:", emergency_focus,
+    "\nPlan text:\n", plan_text
+  )
+
+  call_llm_json(
+    system_prompt = "You review emergency preparedness plans and produce structured, evidence-based scoring.",
+    user_prompt = prompt,
+    schema_hint = "domain_scoring"
+  )
+}
+
 safe_parse_json <- function(text, schema_hint = NULL) {
-  cleaned <- str_trim(text)
-  cleaned <- str_replace(cleaned, "^```json", "")
-  cleaned <- str_replace(cleaned, "^```", "")
-  cleaned <- str_replace(cleaned, "```$", "")
+  cleaned <- trimws(text)
+  cleaned <- sub("^```json", "", cleaned)
+  cleaned <- sub("^```", "", cleaned)
+  cleaned <- sub("```$", "", cleaned)
 
   tryCatch(
     fromJSON(cleaned, simplifyVector = TRUE),
@@ -147,6 +179,64 @@ mock_llm_response <- function(schema_hint = NULL) {
         "Expand continuity of operations procedures for utility and facility disruptions.",
         "Formalize surge staffing and just-in-time training for infectious disease events.",
         "Strengthen risk assessment updates tied to regional hazard trends."
+      )
+    ))
+  }
+
+  if (identical(schema_hint, "domain_scoring")) {
+    return(list(
+      domains = list(
+        list(
+          id = "command",
+          label = "Command",
+          score = 3,
+          evidence = "Incident command roles are referenced, but activation criteria are unclear.",
+          rationale = "Roles are mentioned without clear authority or escalation paths.",
+          gaps = c("Define activation triggers and chain of command."),
+          strengths = c("Basic incident command roles are mentioned.")
+        ),
+        list(
+          id = "communication",
+          label = "Communication",
+          score = 2,
+          evidence = "Limited references to communication protocols or public messaging.",
+          rationale = "Communication appears ad hoc with no clear cadence or channels.",
+          gaps = c("Add internal/external communication protocols and contact redundancy."),
+          strengths = c("Some coordination language appears.")
+        ),
+        list(
+          id = "operations",
+          label = "Operations",
+          score = 3,
+          evidence = "Operational response steps are outlined at a high level.",
+          rationale = "Procedures exist but lack detailed workflows.",
+          gaps = c("Expand operational procedures and resource triggers."),
+          strengths = c("Response actions are mentioned.")
+        ),
+        list(
+          id = "logistics",
+          label = "Logistics",
+          score = 2,
+          evidence = "Supplies and continuity resources are minimally described.",
+          rationale = "Logistics planning is limited and lacks redundancy details.",
+          gaps = c("Document supply chain redundancy and backup power."),
+          strengths = c("Basic resource needs are listed.")
+        )
+      ),
+      overall_summary = "The plan includes core elements but lacks depth in communication and logistics.",
+      recommended_actions = list(
+        list(
+          domain_id = "communication",
+          priority = "High",
+          timeframe = "Immediate",
+          recommendation = "Define communication protocols, roles, and contact redundancy."
+        ),
+        list(
+          domain_id = "logistics",
+          priority = "High",
+          timeframe = "Short-Term",
+          recommendation = "Add backup power and supply chain continuity procedures."
+        )
       )
     ))
   }

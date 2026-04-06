@@ -79,10 +79,12 @@ llm_actions_to_plan <- function(actions) {
   }
 
   if (is.character(actions)) return(actions)
+  if (!is.list(actions)) return(as.character(actions))
 
   out <- vapply(
     actions,
     function(a) {
+      if (!is.list(a)) return("")
       rec <- if (!is.null(a$recommendation)) a$recommendation else ""
       if (!nzchar(rec)) return("")
       rec

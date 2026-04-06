@@ -143,9 +143,13 @@ format_exec_summary_narrative <- function(
   } else if (is.character(actions)) {
     action_sentence <- paste0("Immediate priorities are to ", join_items(actions), ".")
   } else {
+    if (!is.list(actions)) {
+      action_sentence <- paste0("Immediate priorities are to ", join_items(as.character(actions)), ".")
+      return(tags$p(paste(base_sentence, domain_sentence, gap_sentence, action_sentence)))
+    }
     action_sentence <- paste0(
       "Immediate priorities are to ",
-      join_items(vapply(actions, function(a) a$recommendation %||% "", character(1))),
+      join_items(vapply(actions, function(a) if (is.list(a)) a$recommendation %||% "" else "", character(1))),
       "."
     )
   }
@@ -158,7 +162,8 @@ format_action_plan <- function(actions) {
     return(tags$p("No recommendations available."))
   }
 
-  if (is.character(actions)) {
+  if (is.character(actions) || !is.list(actions)) {
+    if (!is.character(actions)) actions <- as.character(actions)
     return(tagList(
       lapply(actions, function(action) {
         div(
@@ -172,12 +177,19 @@ format_action_plan <- function(actions) {
 
   tagList(
     lapply(actions, function(action) {
+      if (!is.list(action)) {
+        return(div(
+          class = "action-card",
+          h3("Recommended Action"),
+          p(as.character(action))
+        ))
+      }
       div(
         class = "action-card",
-        h3(action$domain),
-        p(strong("Priority: "), action$priority),
-        p(strong("Timeframe: "), action$timeframe),
-        p(action$recommendation)
+        h3(action$domain %||% "Recommended Action"),
+        p(strong("Priority: "), action$priority %||% "Unknown"),
+        p(strong("Timeframe: "), action$timeframe %||% "Unspecified"),
+        p(action$recommendation %||% "")
       )
     })
   )

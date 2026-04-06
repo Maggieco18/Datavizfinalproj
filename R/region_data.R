@@ -683,6 +683,258 @@ summarize_cdc_conditions <- function(cdc_result, top_n = 8) {
   list(table = summary_tbl, note = NULL)
 }
 
+parse_year_range_end <- function(year_range) {
+  if (is.null(year_range) || !nzchar(year_range)) return(NA_integer_)
+  parts <- str_split(as.character(year_range), "–|-", simplify = TRUE)
+  if (ncol(parts) == 0) return(NA_integer_)
+  end_year <- suppressWarnings(as.integer(parts[, ncol(parts)]))
+  end_year
+}
+
+normalize_hazard_type <- function(raw_label, source) {
+  label <- raw_label %||% ""
+  key <- tolower(label)
+
+  if (source == "CDC") {
+    return(list(type = "infectious_disease", label = label))
+  }
+
+  if (str_detect(key, "hurricane|typhoon|tropical")) {
+    return(list(type = "hurricane", label = "Hurricane / Tropical Storm"))
+  }
+  if (str_detect(key, "flood")) {
+    return(list(type = "flood", label = "Flood"))
+  }
+  if (str_detect(key, "fire|wildfire")) {
+    return(list(type = "wildfire", label = "Wildfire"))
+  }
+  if (str_detect(key, "tornado")) {
+    return(list(type = "tornado", label = "Tornado"))
+  }
+  if (str_detect(key, "winter|snow|ice|blizzard")) {
+    return(list(type = "winter_storm", label = "Winter Storm"))
+  }
+  if (str_detect(key, "drought")) {
+    return(list(type = "drought", label = "Drought"))
+  }
+  if (str_detect(key, "earthquake|tsunami|volcano")) {
+    return(list(type = "earthquake", label = "Earthquake / Seismic"))
+  }
+  if (str_detect(key, "severe storm|storm|wind|hail|lightning")) {
+    return(list(type = "severe_storm", label = "Severe Storm"))
+  }
+  if (str_detect(key, "heat|excessive heat")) {
+    return(list(type = "heat", label = "Extreme Heat"))
+  }
+  if (str_detect(key, "chemical|hazmat")) {
+    return(list(type = "chemical", label = "Chemical / Hazmat"))
+  }
+
+  list(type = "other", label = stringr::str_to_title(label))
+}
+
+hazard_domain_map <- list(
+  hurricane = c("communication", "supply_chain", "surge_planning", "continuity", "risk_assessment"),
+  flood = c("communication", "supply_chain", "continuity", "risk_assessment"),
+  wildfire = c("communication", "workforce", "supply_chain", "continuity", "risk_assessment"),
+  tornado = c("communication", "surge_planning", "continuity", "risk_assessment"),
+  winter_storm = c("communication", "workforce", "supply_chain", "continuity", "risk_assessment"),
+  severe_storm = c("communication", "supply_chain", "continuity", "risk_assessment"),
+  drought = c("supply_chain", "continuity", "risk_assessment"),
+  earthquake = c("communication", "surge_planning", "continuity", "risk_assessment"),
+  heat = c("communication", "workforce", "surge_planning", "continuity", "risk_assessment"),
+  infectious_disease = c("communication", "workforce", "supply_chain", "surge_planning", "risk_assessment", "continuity"),
+  chemical = c("communication", "workforce", "supply_chain", "continuity", "risk_assessment"),
+  other = c("communication", "risk_assessment", "continuity")
+)
+
+domain_recommendation_map <- list(
+  communication = "Define hazard-specific communication protocols, alerts, and coordination pathways.",
+  workforce = "Specify surge staffing, role reassignments, and just-in-time training for the hazard.",
+  supply_chain = "Document critical supply triggers, vendor contingencies, and distribution plans.",
+  surge_planning = "Outline capacity expansion, triage flow, and alternate care/site activation steps.",
+  risk_assessment = "Include hazard vulnerability assessments and scenario-based assumptions.",
+  continuity = "Add continuity procedures for essential services, IT, utilities, and recovery.",
+  governance = "Clarify plan ownership, approval, drills, and after-action update cadence."
+)
+
+normalize_hazards <- function(fema_summary, cdc_summary, nws_summary) {
+  # Combine FEMA/CDC/NWS summaries into a unified hazard table.
+  hazards <- list()
+  current_year <- as.integer(format(Sys.Date(), "%Y"))
+
+  if (!is.null(fema_summary$table) && nrow(fema_summary$table) > 0) {
+    fema_rows <- fema_summary$table |>
+      mutate(
+        hazard_info = map(incidentType, ~ normalize_hazard_type(.x, "FEMA")),
+        hazard_type = map_chr(hazard_info, "type"),
+        hazard_label = map_chr(hazard_info, "label"),
+        source = "FEMA",
+        frequency = events,
+        last_year = parse_year_range_end(year_range),
+        recency_years = ifelse(is.na(last_year), NA_real_, current_year - last_year),
+        severity = NA_real_
+      ) |>
+      select(hazard_type, hazard_label, source, frequency, recency_years, severity, last_year)
+    hazards <- c(hazards, list(fema_rows))
+  }
+
+  if (!is.null(cdc_summary$table) && nrow(cdc_summary$table) > 0) {
+    cdc_rows <- cdc_summary$table |>
+      mutate(
+        hazard_info = map(condition, ~ normalize_hazard_type(.x, "CDC")),
+        hazard_type = map_chr(hazard_info, "type"),
+        hazard_label = map_chr(hazard_info, "label"),
+        source = "CDC",
+        frequency = ifelse(!is.na(weeks_reported), weeks_reported, cases),
+        last_year = as.integer(format(Sys.Date(), "%Y")),
+        recency_years = 0,
+        severity = cases
+      ) |>
+      select(hazard_type, hazard_label, source, frequency, recency_years, severity, last_year)
+    hazards <- c(hazards, list(cdc_rows))
+  }
+
+  if (!is.null(nws_summary$table) && nrow(nws_summary$table) > 0) {
+    nws_rows <- nws_summary$table |>
+      mutate(
+        hazard_info = map(event_type, ~ normalize_hazard_type(.x, "NWS")),
+        hazard_type = map_chr(hazard_info, "type"),
+        hazard_label = map_chr(hazard_info, "label"),
+        source = "NWS",
+        frequency = events,
+        last_year = parse_year_range_end(year_range),
+        recency_years = ifelse(is.na(last_year), NA_real_, current_year - last_year),
+        severity = total_damage + (total_deaths * 1e6) + (total_injuries * 1e4)
+      ) |>
+      select(hazard_type, hazard_label, source, frequency, recency_years, severity, last_year)
+    hazards <- c(hazards, list(nws_rows))
+  }
+
+  if (length(hazards) == 0) return(tibble::tibble())
+  bind_rows(hazards)
+}
+
+scale_to_unit <- function(x) {
+  x <- suppressWarnings(as.numeric(x))
+  if (all(is.na(x))) return(rep(0, length(x)))
+  rng <- range(x, na.rm = TRUE)
+  if (rng[1] == rng[2]) return(rep(1, length(x)))
+  (x - rng[1]) / (rng[2] - rng[1])
+}
+
+score_hazards <- function(hazard_table, weight_frequency = 0.45, weight_recency = 0.35, weight_severity = 0.2) {
+  # Priority scoring blends frequency, recency, and severity (normalized 0-1).
+  if (is.null(hazard_table) || nrow(hazard_table) == 0) return(hazard_table)
+
+  freq_score <- scale_to_unit(hazard_table$frequency)
+  recency_score <- ifelse(
+    is.na(hazard_table$recency_years),
+    0,
+    1 - scale_to_unit(hazard_table$recency_years)
+  )
+  severity_score <- scale_to_unit(hazard_table$severity)
+
+  if (all(is.na(hazard_table$severity)) || all(severity_score == 0)) {
+    weight_severity <- 0
+  }
+  total_weight <- weight_frequency + weight_recency + weight_severity
+  weight_frequency <- weight_frequency / total_weight
+  weight_recency <- weight_recency / total_weight
+  weight_severity <- weight_severity / total_weight
+
+  hazard_table |>
+    mutate(
+      priority_score = (freq_score * weight_frequency) +
+        (recency_score * weight_recency) +
+        (severity_score * weight_severity),
+      priority = case_when(
+        priority_score >= 0.66 ~ "High",
+        priority_score >= 0.33 ~ "Moderate",
+        TRUE ~ "Low"
+      )
+    )
+}
+
+evaluate_hazard_coverage <- function(plan_text, hazard_table, extraction_domains = NULL, max_n = 5) {
+  # Evaluate plan coverage for the highest-priority hazards using the LLM.
+  if (is.null(hazard_table) || nrow(hazard_table) == 0) return(list())
+
+  fallback_status <- list()
+  if (!is.null(extraction_domains)) {
+    norm_domains <- normalize_domains(extraction_domains)
+    fallback_status <- setNames(
+      tolower(map_chr(norm_domains, "status")),
+      map_chr(norm_domains, "id")
+    )
+  }
+
+  top_hazards <- hazard_table |>
+    arrange(desc(priority_score)) |>
+    slice_head(n = max_n)
+
+  results <- lapply(seq_len(nrow(top_hazards)), function(i) {
+    row <- top_hazards[i, ]
+    expected_domains <- hazard_domain_map[[row$hazard_type]] %||% hazard_domain_map$other
+    expected_domains <- unique(c(expected_domains, "governance"))
+
+    coverage <- tryCatch(
+      assess_hazard_coverage(
+        plan_text = plan_text,
+        hazard_label = row$hazard_label,
+        hazard_type = row$hazard_type,
+        expected_domains = expected_domains
+      ),
+      error = function(e) NULL
+    )
+
+    observed <- coverage$observed
+    if (is.null(observed) || !is.list(observed)) {
+      observed <- lapply(expected_domains, function(d) {
+        status <- fallback_status[[d]] %||% "missing"
+        list(
+          domain_id = d,
+          label = stringr::str_to_title(gsub("_", " ", d)),
+          status = status,
+          rationale = if (status == "present") {
+            "Plan text indicates this domain is addressed."
+          } else if (status == "partial") {
+            "Plan text mentions this domain but lacks hazard-specific detail."
+          } else {
+            "Plan text does not address this domain for the hazard."
+          },
+          evidence = "",
+          recommendation = domain_recommendation_map[[d]] %||% "Add clear hazard-specific procedures for this domain."
+        )
+      })
+    }
+
+    recommendations <- vapply(
+      observed,
+      function(item) {
+        if (!is.list(item)) return("")
+        status <- tolower(item$status %||% "")
+        if (status %in% c("missing", "partial")) {
+          return(item$recommendation %||% "")
+        }
+        ""
+      },
+      character(1)
+    )
+
+    list(
+      hazard = row$hazard_label,
+      priority = row$priority,
+      source = row$source,
+      expected_domains = expected_domains,
+      observed = observed,
+      recommendations = recommendations[nzchar(recommendations)]
+    )
+  })
+
+  results
+}
+
 map_incident_to_domains <- function(incident_type) {
   incident <- tolower(incident_type %||% "")
 
@@ -872,6 +1124,7 @@ build_regional_analysis <- function(
   region_county,
   history_years,
   extraction,
+  plan_text,
   fema_types = c("DR", "EM"),
   incident_types = character(0)
 ) {
@@ -883,7 +1136,9 @@ build_regional_analysis <- function(
       cdc = empty,
       nws = empty,
       weather = empty,
-      coverage = tibble::tibble()
+      coverage = tibble::tibble(),
+      hazards = tibble::tibble(),
+      hazard_eval = list()
     ))
   }
 
@@ -956,12 +1211,47 @@ build_regional_analysis <- function(
   weather_summary <- fetch_nws_forecast_for_region(region_state, region_county)
 
   coverage_table <- build_coverage_table(fema_summary, cdc_summary, nws_summary, extraction)
+  hazard_table <- normalize_hazards(fema_summary, cdc_summary, nws_summary)
+  hazard_table <- score_hazards(hazard_table)
+  hazard_eval <- evaluate_hazard_coverage(plan_text, hazard_table, extraction$domains, max_n = 5)
+
+  hazard_priority <- if (nrow(hazard_table) > 0) {
+    hazard_table |>
+      arrange(desc(priority_score)) |>
+      mutate(
+        priority_score = round(priority_score, 2)
+      ) |>
+      select(hazard_label, source, frequency, recency_years, severity, priority, priority_score)
+  } else {
+    tibble::tibble()
+  }
+
+  hazard_domain_coverage <- if (length(hazard_eval) > 0) {
+    bind_rows(lapply(hazard_eval, function(h) {
+      observed <- h$observed %||% list()
+      if (length(observed) == 0) return(tibble::tibble())
+      tibble::tibble(
+        hazard = h$hazard %||% "Unknown",
+        priority = h$priority %||% "Unknown",
+        source = h$source %||% "Unknown",
+        domain = vapply(observed, function(o) o$label %||% o$domain_id %||% "Domain", character(1)),
+        status = vapply(observed, function(o) o$status %||% "unknown", character(1)),
+        rationale = vapply(observed, function(o) o$rationale %||% "", character(1))
+      )
+    }))
+  } else {
+    tibble::tibble()
+  }
 
   list(
     fema = fema_summary,
     cdc = cdc_summary,
     nws = nws_summary,
     weather = weather_summary,
-    coverage = coverage_table
+    coverage = coverage_table,
+    hazards = hazard_table,
+    hazard_eval = hazard_eval,
+    hazard_priority = hazard_priority,
+    hazard_domain_coverage = hazard_domain_coverage
   )
 }

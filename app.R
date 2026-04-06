@@ -184,45 +184,59 @@ ui <- fluidPage(
             ),
             tabPanel(
               "Regional Context",
-              h3("FEMA Incident Patterns"),
+              h3("Regional Hazard Evaluation"),
               if (has_shinycssloaders) {
-                shinycssloaders::withSpinner(tableOutput("fema_table"))
+                shinycssloaders::withSpinner(tableOutput("hazard_priority_table"))
               } else {
-                tableOutput("fema_table")
+                tableOutput("hazard_priority_table")
               },
-              uiOutput("fema_note"),
-              h3("CDC Notifiable Conditions"),
               if (has_shinycssloaders) {
-                shinycssloaders::withSpinner(tableOutput("cdc_table"))
+                shinycssloaders::withSpinner(uiOutput("hazard_analysis"))
               } else {
-                tableOutput("cdc_table")
+                uiOutput("hazard_analysis")
               },
-              uiOutput("cdc_note"),
-              h3("NWS Forecast Snapshot"),
               if (has_shinycssloaders) {
-                shinycssloaders::withSpinner(tableOutput("nws_forecast"))
+                shinycssloaders::withSpinner(tableOutput("hazard_domain_table"))
               } else {
-                tableOutput("nws_forecast")
+                tableOutput("hazard_domain_table")
               },
-              uiOutput("nws_forecast_note"),
-              h3("NWS Storm Events (History Window)"),
-              if (has_shinycssloaders) {
-                shinycssloaders::withSpinner(tableOutput("nws_table"))
-              } else {
-                tableOutput("nws_table")
-              },
-              uiOutput("nws_note"),
-              h3("Plan Coverage vs Local Patterns"),
-              if (has_shinycssloaders) {
-                shinycssloaders::withSpinner(tableOutput("coverage_table"))
-              } else {
-                tableOutput("coverage_table")
-              },
+              uiOutput("domain_legend"),
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(uiOutput("regional_gap"))
               } else {
                 uiOutput("regional_gap")
-              }
+              },
+              tags$details(
+                tags$summary("Raw Source Data (FEMA / CDC / NWS)"),
+                h3("FEMA Incident Patterns"),
+                if (has_shinycssloaders) {
+                  shinycssloaders::withSpinner(tableOutput("fema_table"))
+                } else {
+                  tableOutput("fema_table")
+                },
+                uiOutput("fema_note"),
+                h3("CDC Notifiable Conditions"),
+                if (has_shinycssloaders) {
+                  shinycssloaders::withSpinner(tableOutput("cdc_table"))
+                } else {
+                  tableOutput("cdc_table")
+                },
+                uiOutput("cdc_note"),
+                h3("NWS Forecast Snapshot"),
+                if (has_shinycssloaders) {
+                  shinycssloaders::withSpinner(tableOutput("nws_forecast"))
+                } else {
+                  tableOutput("nws_forecast")
+                },
+                uiOutput("nws_forecast_note"),
+                h3("NWS Storm Events (History Window)"),
+                if (has_shinycssloaders) {
+                  shinycssloaders::withSpinner(tableOutput("nws_table"))
+                } else {
+                  tableOutput("nws_table")
+                },
+                uiOutput("nws_note")
+              )
             )
           )
         )
@@ -237,6 +251,77 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+  pretty_fema_table <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        `Incident Type` = incidentType,
+        Events = events,
+        `Year Range` = year_range
+      )
+  }
+  pretty_cdc_table <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        Condition = condition,
+        Cases = cases,
+        `Year Range` = year_range
+      )
+  }
+  pretty_nws_table <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        `Event Type` = event_type,
+        Events = events,
+        `Year Range` = year_range,
+        `Total Damage` = total_damage
+      )
+  }
+  pretty_coverage_table <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        Source = source,
+        Event = event,
+        Events = count,
+        Coverage = coverage,
+        Domains = domains
+      )
+  }
+  pretty_forecast_table <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        Period = period,
+        Forecast = forecast,
+        `Temp (F)` = temp_f
+      )
+  }
+  pretty_domains <- function(domain_text) {
+    if (is.null(domain_text) || !nzchar(domain_text)) return(domain_text)
+    parts <- trimws(strsplit(domain_text, ",", fixed = TRUE)[[1]])
+    label_map <- c(
+      communication = "Communication & Coordination",
+      workforce = "Workforce Capacity",
+      supply_chain = "Supply Chain & Logistics",
+      surge_planning = "Surge Planning",
+      risk_assessment = "Risk & Hazard Identification",
+      continuity = "Continuity of Operations",
+      governance = "Governance & Documentation"
+    )
+    pretty <- vapply(
+      parts,
+      function(p) {
+        key <- tolower(p)
+        label_map[[key]] %||% stringr::str_to_title(gsub("_", " ", key))
+      },
+      character(1)
+    )
+    paste(pretty, collapse = ", ")
+  }
+
   country_value <- reactive({
     if (!is.null(input$region_country) &&
         input$region_country == "Other" &&
@@ -426,8 +511,8 @@ server <- function(input, output, session) {
   })
 
   output$fema_table <- renderTable({
-    analysis_result()$regional$fema$table
-  })
+    pretty_fema_table(analysis_result()$regional$fema$table)
+  }, rownames = FALSE)
 
   output$fema_note <- renderUI({
     note <- analysis_result()$regional$fema$note
@@ -435,8 +520,8 @@ server <- function(input, output, session) {
   })
 
   output$cdc_table <- renderTable({
-    analysis_result()$regional$cdc$table
-  })
+    pretty_cdc_table(analysis_result()$regional$cdc$table)
+  }, rownames = FALSE)
 
   output$cdc_note <- renderUI({
     note <- analysis_result()$regional$cdc$note
@@ -444,12 +529,45 @@ server <- function(input, output, session) {
   })
 
   output$coverage_table <- renderTable({
-    analysis_result()$regional$coverage
-  })
+    df <- pretty_coverage_table(analysis_result()$regional$coverage)
+    if (!is.null(df) && nrow(df) > 0) {
+      df$Domains <- vapply(df$Domains, pretty_domains, character(1))
+    }
+    df
+  }, rownames = FALSE)
+
+  output$hazard_priority_table <- renderTable({
+    df <- analysis_result()$regional$hazard_priority
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        Hazard = hazard_label,
+        Source = source,
+        Frequency = frequency,
+        `Recency (years)` = recency_years,
+        Severity = severity,
+        Priority = priority,
+        `Priority Score` = priority_score
+      )
+  }, rownames = FALSE)
+
+  output$hazard_domain_table <- renderTable({
+    df <- analysis_result()$regional$hazard_domain_coverage
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        Hazard = hazard,
+        Priority = priority,
+        Source = source,
+        Domain = domain,
+        Coverage = status,
+        Rationale = rationale
+      )
+  }, rownames = FALSE)
 
   output$nws_forecast <- renderTable({
-    analysis_result()$regional$weather$table
-  })
+    pretty_forecast_table(analysis_result()$regional$weather$table)
+  }, rownames = FALSE)
 
   output$nws_forecast_note <- renderUI({
     note <- analysis_result()$regional$weather$note
@@ -457,8 +575,8 @@ server <- function(input, output, session) {
   })
 
   output$nws_table <- renderTable({
-    analysis_result()$regional$nws$table
-  })
+    pretty_nws_table(analysis_result()$regional$nws$table)
+  }, rownames = FALSE)
 
   output$nws_note <- renderUI({
     note <- analysis_result()$regional$nws$note
@@ -467,6 +585,52 @@ server <- function(input, output, session) {
 
   output$regional_gap <- renderUI({
     format_regional_gap(analysis_result()$regional$gap)
+  })
+
+  output$hazard_analysis <- renderUI({
+    format_hazard_analysis(analysis_result()$regional$hazard_eval)
+  })
+
+  output$domain_legend <- renderUI({
+    legend_items <- list(
+      list(
+        label = "Communication & Coordination",
+        detail = "Incident communication protocols, leadership roles, external coordination, contact lists."
+      ),
+      list(
+        label = "Workforce Capacity",
+        detail = "Surge staffing, role reassignments, just-in-time training, staff wellbeing support."
+      ),
+      list(
+        label = "Supply Chain & Logistics",
+        detail = "Critical supply inventory, vendor diversification, medication management, distribution plans."
+      ),
+      list(
+        label = "Surge Planning",
+        detail = "Bed capacity expansion, triage flow, alternate care sites, discharge acceleration."
+      ),
+      list(
+        label = "Risk & Hazard Identification",
+        detail = "Hazard identification, scenario assumptions, vulnerability analysis, risk updates."
+      ),
+      list(
+        label = "Continuity of Operations",
+        detail = "Essential services continuity, IT resilience, utilities contingencies, recovery planning."
+      ),
+      list(
+        label = "Governance & Documentation",
+        detail = "Plan ownership, approval workflow, drills, after-action reviews, update cadence."
+      )
+    )
+
+    tagList(
+      tags$p(class = "hint", "Domain definitions:"),
+      tags$ul(
+        lapply(legend_items, function(item) {
+          tags$li(tags$strong(item$label), ": ", item$detail)
+        })
+      )
+    )
   })
 }
 

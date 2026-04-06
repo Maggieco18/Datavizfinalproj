@@ -117,22 +117,134 @@ call_gemini_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
   safe_parse_json(message_content, schema_hint = schema_hint)
 }
 
+build_domain_definition_text <- function(domain_ids) {
+  if (is.null(preparedness_framework$domains)) return("")
+  entries <- lapply(preparedness_framework$domains, function(d) {
+    list(
+      id = d$id %||% "",
+      label = d$label %||% "",
+      components = d$components %||% character(0)
+    )
+  })
+  entries <- entries[vapply(entries, function(e) e$id %in% domain_ids, logical(1))]
+  if (length(entries) == 0) return("")
+
+  paste(
+    vapply(entries, function(e) {
+      paste0(
+        "- ", e$label, " (", e$id, "): ",
+        paste(e$components, collapse = "; ")
+      )
+    }, character(1)),
+    collapse = "\n"
+  )
+}
+
+assess_hazard_coverage <- function(plan_text, hazard_label, hazard_type, expected_domains) {
+  # LLM-based semantic classification of plan coverage for hazard-specific domains.
+  domain_definitions <- build_domain_definition_text(expected_domains)
+
+  prompt <- paste(
+    "You are evaluating an emergency preparedness plan for hazard-specific coverage.",
+    "Hazard:", hazard_label,
+    "Hazard type:", hazard_type,
+    "Expected domains:", paste(expected_domains, collapse = ", "),
+    "Domain definitions:",
+    domain_definitions,
+    "Classify each expected domain as Present, Partial, or Missing based on the plan text.",
+    "Present = clearly addressed with specific actions.",
+    "Partial = mentioned but vague or not hazard-specific.",
+    "Missing = not addressed.",
+    "For each domain, provide a short rationale and one targeted recommendation if status is Partial or Missing.",
+    "Return JSON only in this schema:",
+    "{\"hazard\":\"...\",\"observed\":[{\"domain_id\":\"communication\",\"label\":\"Communication & Coordination\",\"status\":\"present|partial|missing\",\"rationale\":\"...\",\"evidence\":\"...\",\"recommendation\":\"...\"}]}",
+    "\nPlan text:\n",
+    plan_text
+  )
+
+  call_llm_json(
+    system_prompt = "You are a preparedness analyst producing structured hazard-by-domain coverage.",
+    user_prompt = prompt,
+    schema_hint = "hazard_coverage"
+  )
+}
+
 assess_plan_domains <- function(plan_text, facility_type, emergency_focus) {
   prompt <- paste(
-    "You are an emergency preparedness reviewer.",
+    "You are an expert emergency preparedness reviewer trained in FEMA NIMS, CDC PHEP, and WHO Emergency Response Framework (ERF) principles.",
+    
     "Evaluate the plan using four domains: Command, Communication, Operations, Logistics.",
-    "Score each domain on a 1–5 scale (1=Absent, 2=Weak, 3=Partial, 4=Strong, 5=Very Strong).",
-    "Provide short evidence snippets and a brief rationale for each domain.",
-    "List the top gaps and recommended actions.",
+    
+    "Use the following domain definitions:",
+    "Command: Incident Command System (ICS) structure, leadership roles, authority, decision-making hierarchy, and succession.",
+    "Communication: Internal and external communication systems, public information strategy, redundancy, and information-sharing (e.g., JIS/JIC alignment).",
+    "Operations: Response actions, coordination mechanisms, Emergency Support Function (ESF) alignment, and operational execution.",
+    "Logistics: Resource management, personnel, facilities, supply chains, and support services.",
+    
+    "Score each domain on a 1–5 scale:",
+    "1 = Absent (no evidence of capability)",
+    "2 = Weak (minimal, vague, or poorly defined elements)",
+    "3 = Partial (some elements present but incomplete or inconsistent)",
+    "4 = Strong (well-defined and mostly complete)",
+    "5 = Very Strong (comprehensive, clearly defined, and aligned with best practices)",
+    
+    "Base all scoring on alignment with FEMA NIMS, CDC PHEP capabilities, and WHO ERF standards.",
+    "Evaluate appropriately for the plan type (e.g., strategic framework vs operational plan). Do not penalize lack of tactical detail if the document is intended to be high-level.",
+    
+    "For each domain, provide detailed and traceable analysis:",
+    
+    "- Provide a score (integer 1–5 only).",
+    
+    "- Provide evidence:",
+    "  * Include 2–4 specific references from the document",
+    "  * For each reference include:",
+    "    - section name or heading if available",
+    "    - description of where it appears (e.g., 'Concept of Operations section', 'Logistics Section')",
+    "    - direct quote or close paraphrase",
+    "  * If no evidence exists, explicitly state 'No evidence found'",
+    
+    "- Provide a detailed rationale:",
+    "  * Minimum 4–6 sentences",
+    "  * Explicitly compare what is present in the plan vs what is expected under FEMA NIMS, CDC PHEP, and WHO ERF",
+    "  * Explain why the assigned score is appropriate",
+    "  * Clearly explain why the score is not higher",
+    "  * Identify whether limitations are due to missing detail, missing structure, or lack of alignment with best practices",
+    
+    "- List key strengths:",
+    "  * Include specific, concrete elements from the plan",
+    "  * Avoid vague or generic statements",
+    
+    "- List specific gaps:",
+    "  * Identify missing or underdeveloped components",
+    "  * Focus on coordination, life safety, and operational effectiveness",
+    
+    "When identifying gaps, prioritize issues that impact coordination, life safety, or operational effectiveness.",
+    
+    "Prioritize citing operationally relevant sections (e.g., Concept of Operations, roles/responsibilities, ESFs, logistics, communications). Avoid over-weighting introductory or descriptive sections.",
+    
+    "List the top gaps across all domains and recommended actions.",
+    
+    "For recommended actions:",
+    "- High priority: critical gaps that could significantly impair emergency response",
+    "- Medium priority: important improvements that strengthen capability",
+    "- Low priority: enhancements or optimizations",
+    "- Timeframe definitions:",
+    "  Immediate = urgent or quickly implementable",
+    "  Short-Term = requires planning but achievable in near future",
+    "  Long-Term = requires significant investment or structural change",
+    
+    "Ensure all outputs are grounded in the provided text. Do not infer content that is not present.",
+    
     "Return JSON only in the schema:",
-    "{\"domains\":[{\"id\":\"command\",\"label\":\"Command\",\"score\":1-5,\"evidence\":\"...\",\"rationale\":\"...\",\"gaps\":[\"...\"],\"strengths\":[\"...\"]}],\"overall_summary\":\"...\",\"recommended_actions\":[{\"domain_id\":\"command\",\"priority\":\"High|Medium|Low\",\"timeframe\":\"Immediate|Short-Term|Long-Term\",\"recommendation\":\"...\"}]}",
+    "{\"domains\":[{\"id\":\"command\",\"label\":\"Command\",\"score\":1,\"evidence\":\"...\",\"rationale\":\"...\",\"gaps\":[\"...\"],\"strengths\":[\"...\"]}],\"overall_summary\":\"...\",\"recommended_actions\":[{\"domain_id\":\"command\",\"priority\":\"High|Medium|Low\",\"timeframe\":\"Immediate|Short-Term|Long-Term\",\"recommendation\":\"...\"}]}",
+    
     "\nFacility type:", facility_type,
     "\nEmergency focus:", emergency_focus,
     "\nPlan text:\n", plan_text
   )
-
+  
   call_llm_json(
-    system_prompt = "You review emergency preparedness plans and produce structured, evidence-based scoring.",
+    system_prompt = "You review emergency preparedness plans and produce structured, evidence-based, and highly detailed scoring aligned with FEMA, CDC, and WHO frameworks. You provide traceable references and thorough justifications.",
     user_prompt = prompt,
     schema_hint = "domain_scoring"
   )
@@ -260,6 +372,30 @@ mock_llm_response <- function(schema_hint = NULL) {
         "Expand continuity of operations procedures for utility and facility disruptions.",
         "Formalize surge staffing and just-in-time training for infectious disease events.",
         "Strengthen risk assessment updates tied to regional hazard trends."
+      )
+    ))
+  }
+
+  if (identical(schema_hint, "hazard_coverage")) {
+    return(list(
+      hazard = "Flood",
+      observed = list(
+        list(
+          domain_id = "communication",
+          label = "Communication & Coordination",
+          status = "missing",
+          rationale = "The plan does not describe flood-specific alerting or evacuation messaging.",
+          evidence = "",
+          recommendation = "Add flood-specific communication protocols and public messaging triggers."
+        ),
+        list(
+          domain_id = "supply_chain",
+          label = "Supply Chain & Logistics",
+          status = "partial",
+          rationale = "Supplies are referenced but disruption contingencies are not described.",
+          evidence = "Mentions inventory without alternative sourcing.",
+          recommendation = "Define backup supply routes and vendor contingencies for flood disruptions."
+        )
       )
     ))
   }

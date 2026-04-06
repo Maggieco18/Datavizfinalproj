@@ -228,3 +228,61 @@ format_regional_gap <- function(regional_gap) {
     }
   )
 }
+
+format_hazard_analysis <- function(hazard_eval) {
+  if (is.null(hazard_eval) || length(hazard_eval) == 0) {
+    return(tags$p("Hazard prioritization unavailable for the selected region."))
+  }
+
+  label_map <- c(
+    communication = "Communication & Coordination",
+    workforce = "Workforce Capacity",
+    supply_chain = "Supply Chain & Logistics",
+    surge_planning = "Surge Planning",
+    risk_assessment = "Risk & Hazard Identification",
+    continuity = "Continuity of Operations",
+    governance = "Governance & Documentation"
+  )
+
+  tagList(
+    lapply(hazard_eval, function(h) {
+      observed <- h$observed %||% list()
+      expected_domains <- vapply(
+        h$expected_domains %||% list(),
+        function(d) label_map[[d]] %||% stringr::str_to_title(gsub("_", " ", d)),
+        character(1)
+      )
+      tagList(
+        div(
+          class = "hazard-card",
+          h3(paste("Hazard:", h$hazard %||% "Unknown")),
+          p(strong("Priority: "), h$priority %||% "Unknown"),
+          p(strong("Source: "), h$source %||% "Unknown"),
+          p(strong("Expected Domains:")),
+          tags$ul(lapply(expected_domains, tags$li)),
+          p(strong("Observed Coverage:")),
+          tags$ul(
+            lapply(observed, function(item) {
+              if (!is.list(item)) return(tags$li("Coverage unavailable."))
+              tags$li(
+                strong((item$label %||% item$domain_id %||% "Domain")),
+                ": ",
+                (item$status %||% "unknown"),
+                " (",
+                (item$rationale %||% "no rationale"),
+                if (nzchar(item$evidence %||% "")) paste0("; ", item$evidence) else "",
+                ")"
+              )
+            })
+          ),
+          if (!is.null(h$recommendations) && length(h$recommendations) > 0) {
+            tagList(
+              p(strong("Recommendations:")),
+              tags$ul(lapply(h$recommendations, tags$li))
+            )
+          }
+        )
+      )
+    })
+  )
+}

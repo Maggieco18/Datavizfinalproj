@@ -230,6 +230,7 @@ run_full_analysis <- function(
     region_county,
     history_years,
     list(domains = domain_status),
+    plan_text,
     fema_types,
     incident_types
   )

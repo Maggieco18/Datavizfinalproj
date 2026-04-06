@@ -171,6 +171,20 @@ body {
   background: #fbfbfb;
 }
 
+.hazard-card {
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(58, 123, 253, 0.18);
+  background: #f7f9ff;
+  margin-bottom: 16px;
+  box-shadow: 0 14px 30px -26px var(--shadow-strong);
+}
+
+.hazard-card h3 {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
 .gap-card h3,
 .action-card h3 {
   margin-top: 0;

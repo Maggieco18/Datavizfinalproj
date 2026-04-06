@@ -185,6 +185,16 @@ body {
   margin-bottom: 8px;
 }
 
+.js-error-banner {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #ffe9e9;
+  color: #7a1f1f;
+  border: 1px solid rgba(122, 31, 31, 0.2);
+  font-size: 0.9rem;
+}
+
 .gap-card h3,
 .action-card h3 {
   margin-top: 0;

@@ -18,10 +18,25 @@ source("R/region_data.R")
 
 ui <- fluidPage(
   tags$head(
-    tags$link(rel = "stylesheet", type = "text/css", href = "styles.css")
+    tags$link(rel = "stylesheet", type = "text/css", href = "styles.css"),
+    tags$script(HTML("
+      window.addEventListener('error', function(event) {
+        var box = document.getElementById('js-error-banner');
+        if (!box) return;
+        box.style.display = 'block';
+        box.textContent = 'JS Error: ' + (event.message || event.error || event);
+      });
+      window.addEventListener('unhandledrejection', function(event) {
+        var box = document.getElementById('js-error-banner');
+        if (!box) return;
+        box.style.display = 'block';
+        box.textContent = 'JS Promise Rejection: ' + (event.reason && event.reason.message ? event.reason.message : String(event.reason || event));
+      });
+    "))
   ),
   div(
     class = "app-shell",
+    tags$div(id = "js-error-banner", class = "js-error-banner", style = "display:none;"),
     div(
       class = "app-header",
       div(
@@ -236,6 +251,11 @@ ui <- fluidPage(
                   tableOutput("nws_table")
                 },
                 uiOutput("nws_note")
+              ),
+              tags$details(
+                tags$summary("Global Outbreak Data (Disease Outbreak News)"),
+                tableOutput("outbreaks_table"),
+                uiOutput("outbreaks_note")
               )
             )
           )
@@ -266,6 +286,15 @@ server <- function(input, output, session) {
       dplyr::rename(
         Condition = condition,
         Cases = cases,
+        `Year Range` = year_range
+      )
+  }
+  pretty_outbreaks_table <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        Disease = Disease,
+        Events = events,
         `Year Range` = year_range
       )
   }
@@ -564,6 +593,15 @@ server <- function(input, output, session) {
         Rationale = rationale
       )
   }, rownames = FALSE)
+
+  output$outbreaks_table <- renderTable({
+    pretty_outbreaks_table(analysis_result()$regional$outbreaks$table)
+  }, rownames = FALSE)
+
+  output$outbreaks_note <- renderUI({
+    note <- analysis_result()$regional$outbreaks$note
+    if (!is.null(note) && nzchar(note)) tags$p(class = "hint", note)
+  })
 
   output$nws_forecast <- renderTable({
     pretty_forecast_table(analysis_result()$regional$weather$table)

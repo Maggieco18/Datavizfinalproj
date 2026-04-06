@@ -3,6 +3,7 @@ normalize_domains <- function(domains) {
     return(purrr::pmap(domains, function(...) list(...)))
   }
   if (is.null(domains)) return(list())
+  if (!is.list(domains)) return(list())
   domains
 }
 
@@ -19,6 +20,7 @@ score_domains <- function(features) {
 }
 
 llm_domains_to_scorecard <- function(llm_domains) {
+  llm_domains <- normalize_domains(llm_domains)
   if (is.null(llm_domains) || length(llm_domains) == 0) {
     return(tibble::tibble(domain = character(0), score = numeric(0)))
   }
@@ -27,37 +29,43 @@ llm_domains_to_scorecard <- function(llm_domains) {
     domain = vapply(
       llm_domains,
       function(d) {
+        if (!is.list(d)) return("")
         if (!is.null(d$label) && nzchar(d$label)) return(d$label)
-        d$id
+        d$id %||% ""
       },
       character(1)
     ),
     score = vapply(
       llm_domains,
       function(d) {
+        if (!is.list(d)) return(20)
         raw <- d$score
-      if (is.null(raw) || is.na(raw)) return(20)
-      raw <- max(1, min(5, as.numeric(raw)))
-      raw * 20
-    },
+        if (is.null(raw) || is.na(raw)) return(20)
+        raw <- max(1, min(5, as.numeric(raw)))
+        raw * 20
+      },
       numeric(1)
     )
   )
 }
 
 llm_domains_to_gaps <- function(llm_domains) {
+  llm_domains <- normalize_domains(llm_domains)
   if (is.null(llm_domains) || length(llm_domains) == 0) {
     return(list())
   }
 
   lapply(llm_domains, function(d) {
+    if (!is.list(d)) {
+      return(list(domain = "Domain", status = "missing", evidence = "", components = character(0)))
+    }
     score <- if (is.null(d$score)) 0 else as.numeric(d$score)
     status <- if (score >= 4) "strong" else if (score >= 3) "partial" else "missing"
     evidence <- d$rationale
     if (is.null(evidence) || !nzchar(evidence)) evidence <- if (!is.null(d$evidence)) d$evidence else ""
     components <- if (!is.null(d$gaps)) d$gaps else character(0)
     list(
-      domain = if (!is.null(d$label) && nzchar(d$label)) d$label else d$id,
+      domain = if (!is.null(d$label) && nzchar(d$label)) d$label else (d$id %||% "Domain"),
       status = status,
       evidence = evidence,
       components = components

@@ -5,7 +5,10 @@ call_llm_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
     return(mock_llm_response(schema_hint))
   }
 
-  base_url <- sub("/v1/?$", "", app_config$llm_api_base)
+  provider <- tolower(app_config$llm_provider %||% "openai_compatible")
+  if (provider %in% c("gemini", "google", "google_gemini", "generativelanguage")) {
+    return(call_gemini_json(system_prompt, user_prompt, schema_hint = schema_hint))
+  }
 
   model_name <- app_config$llm_model
   if (is.null(model_name) ||
@@ -16,6 +19,7 @@ call_llm_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
     model_name <- "gpt-5-mini"
   }
 
+  base_url <- sub("/v1/?$", "", app_config$llm_api_base)
   request_body <- list(
     model = model_name,
     temperature = app_config$llm_temperature,
@@ -39,6 +43,77 @@ call_llm_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
 
   parsed <- content(response, as = "parsed", type = "application/json")
   message_content <- parsed$choices[[1]]$message$content
+  safe_parse_json(message_content, schema_hint = schema_hint)
+}
+
+call_gemini_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
+  base_url <- sub("/+$", "", app_config$llm_api_base)
+
+  model_name <- app_config$llm_model
+  if (is.null(model_name) ||
+      length(model_name) == 0 ||
+      is.na(model_name) ||
+      !nzchar(model_name) ||
+      tolower(model_name) %in% c("none", "null", "nil", "na")) {
+    model_name <- "gemini-1.5-flash"
+  }
+  model_name <- sub("^models/", "", model_name)
+
+  merged_prompt <- paste(
+    system_prompt,
+    "",
+    user_prompt,
+    "",
+    "Return JSON only.",
+    sep = "\n"
+  )
+
+  request_body <- list(
+    contents = list(
+      list(
+        role = "user",
+        parts = list(list(text = merged_prompt))
+      )
+    ),
+    generationConfig = list(
+      temperature = app_config$llm_temperature
+    )
+  )
+
+  response <- POST(
+    url = paste0(base_url, "/v1beta/models/", model_name, ":generateContent"),
+    query = list(key = app_config$llm_api_key),
+    encode = "json",
+    body = request_body,
+    timeout(app_config$llm_timeout)
+  )
+
+  if (http_error(response)) {
+    stop("LLM request failed: ", content(response, as = "text"))
+  }
+
+  parsed <- content(response, as = "parsed", type = "application/json")
+  if (!is.list(parsed)) {
+    raw_text <- content(response, as = "text")
+    parsed <- tryCatch(
+      jsonlite::fromJSON(raw_text, simplifyVector = FALSE),
+      error = function(e) NULL
+    )
+  }
+  if (is.null(parsed) || !is.list(parsed)) {
+    return(mock_llm_response(schema_hint))
+  }
+
+  candidates <- parsed$candidates %||% list()
+  if (length(candidates) == 0 || is.null(candidates[[1]]$content$parts)) {
+    return(mock_llm_response(schema_hint))
+  }
+
+  parts <- candidates[[1]]$content$parts
+  if (is.null(parts) || length(parts) == 0) {
+    return(mock_llm_response(schema_hint))
+  }
+  message_content <- paste(vapply(parts, function(part) part$text %||% "", ""), collapse = "")
   safe_parse_json(message_content, schema_hint = schema_hint)
 }
 
@@ -69,12 +144,18 @@ safe_parse_json <- function(text, schema_hint = NULL) {
   cleaned <- sub("^```", "", cleaned)
   cleaned <- sub("```$", "", cleaned)
 
-  tryCatch(
+  parsed <- tryCatch(
     fromJSON(cleaned, simplifyVector = TRUE),
     error = function(e) {
-      mock_llm_response(schema_hint)
+      NULL
     }
   )
+
+  if (is.null(parsed) || !is.list(parsed)) {
+    return(mock_llm_response(schema_hint))
+  }
+
+  parsed
 }
 
 mock_llm_response <- function(schema_hint = NULL) {

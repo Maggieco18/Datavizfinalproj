@@ -181,6 +181,11 @@ run_full_analysis <- function(
       }
     )
 
+    if (!is.null(llm_assessment) && !is.list(llm_assessment)) {
+      llm_error <- "LLM response parsing failed."
+      llm_assessment <- NULL
+    }
+
     if (!is.null(llm_assessment$domains) && length(llm_assessment$domains) > 0) {
       domain_scores <- llm_domains_to_scorecard(llm_assessment$domains)
       final_score <- mean(domain_scores$score)

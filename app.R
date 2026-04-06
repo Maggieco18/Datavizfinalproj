@@ -26,15 +26,10 @@ ui <- fluidPage(
       class = "app-header",
       div(
         class = "title-block",
-        h1("Emergency Preparedness Consulting Analyzer"),
+        h1("Emergency Preparedness Plan Analyzer"),
         p("Upload or paste a preparedness plan to generate a structured scorecard, gap analysis, and prioritized recommendations.")
       ),
-      div(
-        class = "badge-block",
-        span(class = "badge", "Healthcare Preparedness"),
-        span(class = "badge", "Consulting Output"),
-        span(class = "badge", "GenAI-Assisted")
-      )
+      NULL
     ),
     div(
       class = "app-body",
@@ -87,10 +82,18 @@ ui <- fluidPage(
               options = list(create = TRUE, placeholder = "Start typing a country"),
               selected = "United States"
             ),
+            conditionalPanel(
+              condition = "input.region_country === 'Other'",
+              textInput(
+                "region_country_other",
+                "Country (Other)",
+                placeholder = "Type your country name"
+              )
+            ),
             selectInput(
               "region_state",
               "Region (State/Territory)",
-              choices = c(setNames(state.abb, state.name), "DC" = "DC"),
+              choices = c("NA" = "NA", setNames(state.abb, state.name), "DC" = "DC"),
               selected = "CA"
             ),
             selectizeInput(
@@ -234,6 +237,16 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+  country_value <- reactive({
+    if (!is.null(input$region_country) &&
+        input$region_country == "Other" &&
+        !is.null(input$region_country_other) &&
+        nzchar(input$region_country_other)) {
+      return(input$region_country_other)
+    }
+    input$region_country
+  })
+
   analysis_result <- reactive({
     plan_text <- load_plan_text(input$plan_file, input$plan_text)
     validate_plan_text(plan_text)
@@ -243,7 +256,7 @@ server <- function(input, output, session) {
       plan_text = plan_text,
       facility_type = input$facility_type,
       emergency_focus = input$emergency_focus,
-      region_country = input$region_country,
+      region_country = country_value(),
       region_state = input$region_state,
       region_county = input$region_county,
       history_years = input$history_years,
@@ -257,6 +270,7 @@ server <- function(input, output, session) {
       input$facility_type,
       input$emergency_focus,
       input$region_country,
+      input$region_country_other,
       input$region_state,
       input$region_county,
       input$history_years,
@@ -265,8 +279,8 @@ server <- function(input, output, session) {
     ) %>%
     bindEvent(input$run_analysis, ignoreInit = TRUE)
 
-  observeEvent(input$region_state, {
-    if (!is.null(input$region_country) && tolower(input$region_country) == "united states") {
+  observeEvent(list(input$region_state, input$region_country, input$region_country_other), {
+    if (!is.null(country_value()) && tolower(country_value()) == "united states") {
       county_choices <- get_county_choices(input$region_state)
       county_choices <- c("Not applicable", county_choices)
       updateSelectizeInput(
@@ -285,12 +299,18 @@ server <- function(input, output, session) {
     }
   })
 
+  observeEvent(list(input$region_country, input$region_country_other), {
+    if (!is.null(country_value()) && tolower(country_value()) != "united states") {
+      updateSelectInput(session, "region_state", selected = "NA")
+    }
+  })
+
   output$scorecard <- renderTable({
     analysis_result()$scorecard
   })
 
   output$framework_note <- renderUI({
-    country <- input$region_country %||% "United States"
+    country <- country_value() %||% "United States"
     llm_note <- if (!is.null(app_config$llm_api_key) &&
       nzchar(app_config$llm_api_key) &&
       !is.null(app_config$llm_api_base) &&
@@ -330,7 +350,7 @@ server <- function(input, output, session) {
   })
 
   output$framework_picker <- renderUI({
-    non_us <- !is.null(input$region_country) && tolower(input$region_country) != "united states"
+    non_us <- !is.null(country_value()) && tolower(country_value()) != "united states"
     if (non_us) {
       tagList(
         tags$p(class = "hint", "Framework mapping is fixed to WHO ERF for non-U.S. plans."),

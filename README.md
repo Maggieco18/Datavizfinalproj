@@ -19,7 +19,7 @@ shiny::runApp()
 
 ## LLM Configuration
 
-The app uses an OpenAI-compatible chat completions endpoint. Configure via environment variables:
+The app supports OpenAI-compatible chat completions endpoints and Google Gemini. Configure via environment variables:
 
 ```bash
 export LLM_API_BASE="https://your-llm-endpoint"
@@ -29,6 +29,16 @@ export LLM_TEMPERATURE="0.2"
 ```
 
 If `LLM_API_BASE` or `LLM_API_KEY` is missing, the app falls back to a mock response so you can test the UI.
+
+### Gemini example
+
+```bash
+export LLM_PROVIDER="gemini"
+export LLM_API_KEY="my api key"
+export LLM_MODEL="gemini-1.5-flash"
+# Optional override (defaults to https://generativelanguage.googleapis.com)
+export LLM_API_BASE="https://generativelanguage.googleapis.com"
+```
 
 ## Regional Data
 

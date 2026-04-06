@@ -1,22 +1,27 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=IBM+Plex+Serif:wght@400;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700&family=Instrument+Serif:ital@0;1&display=swap");
 
 :root {
-  --ink: #0d1b1e;
-  --slate: #2f3c48;
-  --mist: #f5f2ee;
-  --accent: #f08a24;
-  --accent-soft: rgba(240, 138, 36, 0.12);
-  --sea: #0e6b6a;
+  --ink: #0c1419;
+  --slate: #2b3a44;
+  --mist: #f3f5f7;
+  --accent: #3a7bfd;
+  --accent-soft: rgba(58, 123, 253, 0.12);
+  --sea: #0f6b66;
+  --sea-dark: #0a4a48;
+  --plum: #1f1d36;
   --card: #ffffff;
-  --shadow: rgba(13, 27, 30, 0.12);
-  --shadow-strong: rgba(13, 27, 30, 0.2);
-  --border: rgba(13, 27, 30, 0.08);
-  --highlight: #fff7ec;
+  --shadow: rgba(12, 20, 25, 0.12);
+  --shadow-strong: rgba(12, 20, 25, 0.22);
+  --border: rgba(12, 20, 25, 0.08);
+  --highlight: #eef3ff;
 }
 
 body {
-  font-family: "Space Grotesk", sans-serif;
-  background: radial-gradient(circle at top, #f9efe1 0%, #f3f6f6 38%, #e8eef4 100%);
+  font-family: "Manrope", sans-serif;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(58, 123, 253, 0.18), transparent 42%),
+    radial-gradient(circle at 88% 12%, rgba(15, 107, 102, 0.18), transparent 46%),
+    linear-gradient(180deg, #f1f4f8 0%, #edf2f6 45%, #e3ebf2 100%);
   color: var(--ink);
   letter-spacing: 0.1px;
 }
@@ -30,26 +35,7 @@ body {
 
 .app-shell::before,
 .app-shell::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  width: 260px;
-  height: 260px;
-  border-radius: 60px;
-  filter: blur(0.5px);
-  opacity: 0.75;
-}
-
-.app-shell::before {
-  top: -40px;
-  right: 6%;
-  background: radial-gradient(circle, #ffe1c4 0%, rgba(255, 225, 196, 0) 70%);
-}
-
-.app-shell::after {
-  bottom: -60px;
-  left: 3%;
-  background: radial-gradient(circle, #cfe9e5 0%, rgba(207, 233, 229, 0) 72%);
+  content: none;
 }
 
 .app-header {
@@ -57,23 +43,42 @@ body {
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 20px;
-  padding: 28px;
+  padding: 30px 32px;
   border-radius: 24px;
-  background: linear-gradient(130deg, #fff8ef, #e6f2ee);
-  box-shadow: 0 22px 38px -26px var(--shadow-strong);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.85), rgba(236, 243, 255, 0.9)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.2));
+  box-shadow: 0 24px 44px -28px var(--shadow-strong);
+  border: 1px solid rgba(13, 27, 30, 0.06);
+  position: relative;
   animation: lift 0.6s ease-out;
+  backdrop-filter: blur(6px);
+}
+
+.app-header::after {
+  content: "";
+  position: absolute;
+  left: 28px;
+  right: 28px;
+  bottom: 18px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), rgba(15, 107, 102, 0.4));
+  opacity: 0.6;
 }
 
 .title-block h1 {
-  font-size: 2.35rem;
+  font-size: 2.45rem;
   margin-bottom: 8px;
   font-weight: 700;
+  letter-spacing: -0.5px;
 }
 
 .title-block p {
-  font-family: "IBM Plex Serif", serif;
+  font-family: "Instrument Serif", serif;
   color: var(--slate);
   max-width: 520px;
+  font-size: 1.02rem;
 }
 
 .badge-block {
@@ -84,13 +89,13 @@ body {
 }
 
 .badge {
-  background: #f0fbf7;
-  color: #0e5a59;
+  background: rgba(15, 107, 102, 0.08);
+  color: #0a4d4a;
   padding: 8px 14px;
   border-radius: 999px;
   font-size: 0.85rem;
   font-weight: 600;
-  border: 1px solid rgba(14, 107, 106, 0.15);
+  border: 1px solid rgba(15, 107, 102, 0.2);
 }
 
 .app-body {
@@ -107,6 +112,12 @@ body {
   box-shadow: 0 24px 44px -32px var(--shadow-strong);
   animation: fadeIn 0.5s ease-out;
   border: 1px solid var(--border);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.panel:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 28px 52px -36px var(--shadow-strong);
 }
 
 .panel h2 {
@@ -122,15 +133,15 @@ body {
 }
 
 .panel-input {
-  background: linear-gradient(180deg, #fffdf9 0%, #ffffff 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #f7f9fb 100%);
 }
 
 .panel-output {
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbfb 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #f5f8fb 100%);
 }
 
 .primary-btn {
-  background: var(--accent);
+  background: linear-gradient(135deg, #3a7bfd 0%, #6aa3ff 100%);
   color: white;
   border: none;
   padding: 10px 18px;
@@ -141,8 +152,8 @@ body {
 }
 
 .primary-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 18px -12px var(--shadow);
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 14px 22px -14px var(--shadow);
 }
 
 .hint {
@@ -210,6 +221,12 @@ body {
   padding: 12px 14px 18px;
   border: 1px solid var(--border);
   box-shadow: 0 18px 34px -28px var(--shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.tabs-shell::before {
+  content: none;
 }
 
 /* Inputs */
@@ -258,24 +275,24 @@ label {
 
 .nav-tabs > li > a {
   color: var(--slate);
-  border-radius: 12px 12px 0 0;
+  border-radius: 999px;
   border: 1px solid transparent;
-  padding: 10px 14px;
+  padding: 8px 14px;
   transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+  margin-right: 6px;
 }
 
 .nav-tabs > li.active > a,
 .nav-tabs > li.active > a:focus,
 .nav-tabs > li.active > a:hover {
-  background: var(--highlight);
-  color: var(--ink);
-  border: 1px solid var(--border);
-  border-bottom-color: transparent;
+  background: #eef3ff;
+  color: var(--plum);
+  border: 1px solid rgba(58, 123, 253, 0.35);
 }
 
 .nav-tabs > li > a:hover {
-  background: #f7f3ed;
-  border: 1px solid var(--border);
+  background: #f2f5f9;
+  border: 1px solid rgba(13, 27, 30, 0.08);
 }
 
 /* Scorecard helpers */
@@ -285,8 +302,8 @@ label {
   gap: 6px;
   margin-bottom: 12px;
   padding: 12px 14px;
-  background: #fff9f1;
-  border: 1px solid rgba(240, 138, 36, 0.2);
+  background: #f3f6ff;
+  border: 1px solid rgba(58, 123, 253, 0.2);
   border-radius: 14px;
   font-size: 0.92rem;
   color: var(--slate);
@@ -331,7 +348,7 @@ table {
 
 table th {
   text-align: left;
-  background: #f4f6f8;
+  background: #eef2f6;
   padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   font-weight: 600;

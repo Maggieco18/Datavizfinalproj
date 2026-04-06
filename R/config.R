@@ -6,11 +6,24 @@ get_env_nonempty <- function(name, fallback = "") {
   value
 }
 
+llm_provider_default <- get_env_nonempty("LLM_PROVIDER", "openai_compatible")
+llm_provider_lower <- tolower(llm_provider_default)
+llm_api_base_default <- if (llm_provider_lower %in% c("gemini", "google", "google_gemini", "generativelanguage")) {
+  "https://generativelanguage.googleapis.com"
+} else {
+  get_env_nonempty("LITELLM_API_BASE", "https://litellm.oit.duke.edu")
+}
+llm_model_default <- if (llm_provider_lower %in% c("gemini", "google", "google_gemini", "generativelanguage")) {
+  "gemini-1.5-flash"
+} else {
+  get_env_nonempty("LITELLM_MODEL", "gpt-5-mini")
+}
+
 app_config <- list(
-  llm_provider = get_env_nonempty("LLM_PROVIDER", "openai_compatible"),
-  llm_api_base = get_env_nonempty("LLM_API_BASE", get_env_nonempty("LITELLM_API_BASE", "https://litellm.oit.duke.edu")),
+  llm_provider = llm_provider_default,
+  llm_api_base = get_env_nonempty("LLM_API_BASE", llm_api_base_default),
   llm_api_key = get_env_nonempty("LLM_API_KEY", get_env_nonempty("LITELLM_API_KEY", "")),
-  llm_model = get_env_nonempty("LLM_MODEL", get_env_nonempty("LITELLM_MODEL", "gpt-5-mini")),
+  llm_model = get_env_nonempty("LLM_MODEL", llm_model_default),
   llm_temperature = as.numeric(get_env_nonempty("LLM_TEMPERATURE", "0.2")),
   llm_timeout = as.numeric(get_env_nonempty("LLM_TIMEOUT", "60")),
   cdc_app_token = get_env_nonempty("CDC_APP_TOKEN", "")

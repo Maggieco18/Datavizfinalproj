@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      R_REPOS: https://cloud.r-project.org
       SHINYAPPS_ACCOUNT: ${{ secrets.SHINYAPPS_ACCOUNT }}
       SHINYAPPS_TOKEN: ${{ secrets.SHINYAPPS_TOKEN }}
       SHINYAPPS_SECRET: ${{ secrets.SHINYAPPS_SECRET }}
@@ -21,7 +22,7 @@ jobs:
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: '4.4.1'
-          use-public-rspm: true
+          use-public-rspm: false
 
       - name: Install R dependencies
         uses: r-lib/actions/setup-r-dependencies@v2

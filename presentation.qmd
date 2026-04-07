@@ -1,0 +1,37 @@
+---
+title: "Emergency Preparedness Plan Analyzer"
+format:
+  revealjs:
+    theme: [default, serif]
+    transition: slide
+    slide-number: true
+    center: true
+    width: 1280
+    height: 720
+    margin: 0.06
+    background-transition: fade
+---
+
+## Introduction
+
+- Emergency preparedness plans are long and can be tedious, even with general templates.
+- Evaluating plans to meet changing guidelines can be challenging.
+- FEMA changing guidelines with new administration.
+- Reviewing these documents often is also important to ensure preparedness and accuracy.
+
+## What Does My App Do?
+
+- It takes often very large documents and directly compares them to standards and guidelines outlined by emergency preparedness organizations.
+- Federal Emergency Management Agency
+- CDC Public Health Emergency Preparedness Program (PHEP)
+- WHO Emergency Response Framework (ERF)
+- Helps the user not to have to constantly recall or reference the general guidelines.
+- Streamlines first reviews of document to identify major challenges.
+- Looks at historical data of natural disasters, outbreaks, and weather patterns to identify common events to plan for based on region.
+
+## How Does It Do This?
+
+- Shiny app.
+- Actively pulls data from the FEMA website, CDC, WHO, and a disease outbreaks website.
+- Uses an LLM through GEMINI to interpret the guidelines, score the plan, identify gaps, and provide recommendations based off of results.
+- It also takes historical disasters reported from these websites to identify location specific or hazard specific gaps.

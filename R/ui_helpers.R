@@ -214,7 +214,6 @@ format_regional_gap <- function(regional_gap) {
           div(
             class = "gap-card",
             p(strong(item$pattern %||% "Pattern")),
-            p(strong("Coverage: "), item$coverage %||% "unknown"),
             p(item$impact %||% "")
           )
         }))

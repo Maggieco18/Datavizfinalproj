@@ -201,7 +201,22 @@ ui <- fluidPage(
             ),
             tabPanel(
               "Regional Context",
-              h3("Regional Hazard Evaluation"),
+              h3("Raw Source Data"),
+              h4("FEMA Incident Patterns"),
+              if (has_shinycssloaders) {
+                shinycssloaders::withSpinner(tableOutput("fema_table"))
+              } else {
+                tableOutput("fema_table")
+              },
+              uiOutput("fema_note"),
+              h4("CDC Notifiable Conditions"),
+              if (has_shinycssloaders) {
+                shinycssloaders::withSpinner(tableOutput("cdc_table"))
+              } else {
+                tableOutput("cdc_table")
+              },
+              uiOutput("cdc_note"),
+              h3("Hazard Summary"),
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(tableOutput("hazard_priority_table"))
               } else {
@@ -219,34 +234,19 @@ ui <- fluidPage(
               } else {
                 uiOutput("hazard_analysis")
               },
+              h3("Domain Coverage"),
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(tableOutput("hazard_domain_table"))
               } else {
                 tableOutput("hazard_domain_table")
               },
+              uiOutput("domain_toggle_button"),
               uiOutput("domain_legend"),
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(uiOutput("regional_gap"))
               } else {
                 uiOutput("regional_gap")
               },
-              tags$details(
-                tags$summary("Raw Source Data (FEMA / CDC)"),
-                h3("FEMA Incident Patterns"),
-                if (has_shinycssloaders) {
-                  shinycssloaders::withSpinner(tableOutput("fema_table"))
-                } else {
-                  tableOutput("fema_table")
-                },
-                uiOutput("fema_note"),
-                h3("CDC Notifiable Conditions"),
-                if (has_shinycssloaders) {
-                  shinycssloaders::withSpinner(tableOutput("cdc_table"))
-                } else {
-                  tableOutput("cdc_table")
-                },
-                uiOutput("cdc_note")
-              ),
               tags$details(
                 tags$summary("Global Outbreak Data (Disease Outbreak News)"),
                 tableOutput("outbreaks_table"),
@@ -266,6 +266,12 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+  show_domain_defs <- reactiveVal(FALSE)
+
+  observeEvent(input$toggle_domains, {
+    show_domain_defs(!show_domain_defs())
+  })
+
   pretty_fema_table <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
     df |>
@@ -617,7 +623,13 @@ server <- function(input, output, session) {
     format_hazard_analysis(analysis_result()$regional$hazard_eval)
   })
 
+  output$domain_toggle_button <- renderUI({
+    label <- if (show_domain_defs()) "Hide Domain Definitions" else "Show Domain Definitions"
+    actionButton("toggle_domains", label)
+  })
+
   output$domain_legend <- renderUI({
+    if (!show_domain_defs()) return(NULL)
     legend_items <- list(
       list(
         label = "Communication & Coordination",

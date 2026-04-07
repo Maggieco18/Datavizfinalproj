@@ -124,8 +124,17 @@ build_regional_gap_summary <- function(coverage_table) {
   }
 
   focused <- coverage_table |>
+    filter(coverage %in% c("missing", "partial")) |>
     arrange(coverage, desc(count)) |>
     slice_head(n = 4)
+
+  if (nrow(focused) == 0) {
+    return(list(
+      summary = "Regional incident history does not show missing domain coverage based on the selected hazards.",
+      gap_insights = list(),
+      recommended_focus = list()
+    ))
+  }
 
   gap_insights <- purrr::pmap(
     focused,
@@ -133,13 +142,17 @@ build_regional_gap_summary <- function(coverage_table) {
       list(
         pattern = paste(source, "-", event),
         coverage = coverage,
-        impact = paste0("Coverage rated as ", coverage, " for domains: ", domains, ".")
+        impact = if (coverage == "missing") {
+          paste0("Missing coverage for domains: ", domains, ".")
+        } else {
+          paste0("Partial coverage for domains: ", domains, ".")
+        }
       )
     }
   )
 
   focus <- focused |>
-    mutate(focus_item = paste0("Improve coverage for ", event, " (", coverage, ").")) |>
+    mutate(focus_item = paste0("Improve coverage for ", event, ".")) |>
     pull(focus_item)
 
   list(

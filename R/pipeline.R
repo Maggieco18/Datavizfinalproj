@@ -250,8 +250,6 @@ run_full_analysis <- function(
     regional = list(
       fema = regional_analysis$fema,
       cdc = regional_analysis$cdc,
-      nws = regional_analysis$nws,
-      weather = regional_analysis$weather,
       coverage = regional_analysis$coverage,
       gap = regional_gap
     )

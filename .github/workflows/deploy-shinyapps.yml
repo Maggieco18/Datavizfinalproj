@@ -1,0 +1,35 @@
+name: Deploy Shiny App
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SHINYAPPS_ACCOUNT: ${{ secrets.SHINYAPPS_ACCOUNT }}
+      SHINYAPPS_TOKEN: ${{ secrets.SHINYAPPS_TOKEN }}
+      SHINYAPPS_SECRET: ${{ secrets.SHINYAPPS_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Install R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: rsconnect
+          needs: |
+            shiny
+
+      - name: Deploy to shinyapps.io
+        run: >
+          R -q -e
+          'rsconnect::setAccountInfo(name=Sys.getenv("SHINYAPPS_ACCOUNT"),
+          token=Sys.getenv("SHINYAPPS_TOKEN"),
+          secret=Sys.getenv("SHINYAPPS_SECRET"));
+          rsconnect::deployApp(appDir=".", forceUpdate=TRUE)'

@@ -119,50 +119,6 @@ get_region_centroid <- function(state_code, county = NULL) {
   list(lat = mean(lat), lon = mean(lon))
 }
 
-fetch_nws_forecast <- function(lat, lon) {
-  user_agent <- "datavizfinalproject (shiny app)"
-  point_url <- sprintf("https://api.weather.gov/points/%.4f,%.4f", lat, lon)
-  point <- tryCatch(
-    fetch_json(point_url, headers = list("User-Agent" = user_agent)),
-    error = function(e) NULL
-  )
-
-  forecast_url <- point$properties$forecast %||% NULL
-  if (is.null(forecast_url)) {
-    return(list(table = tibble::tibble(), note = "NWS forecast unavailable for the selected region."))
-  }
-
-  forecast <- tryCatch(
-    fetch_json(forecast_url, headers = list("User-Agent" = user_agent)),
-    error = function(e) NULL
-  )
-
-  periods <- forecast$properties$periods %||% list()
-  if (length(periods) == 0) {
-    return(list(table = tibble::tibble(), note = "NWS forecast unavailable for the selected region."))
-  }
-
-  tbl <- tibble::as_tibble(periods) |>
-    transmute(
-      period = .data[["name"]] %||% "",
-      forecast = .data[["shortForecast"]] %||% "",
-      temperature = paste0(.data[["temperature"]], " ", .data[["temperatureUnit"]]),
-      wind = paste(.data[["windSpeed"]], .data[["windDirection"]])
-    ) |>
-    slice_head(n = 6)
-
-  list(table = tbl, note = NULL)
-}
-
-fetch_nws_forecast_for_region <- function(state_code, county = NULL) {
-  centroid <- get_region_centroid(state_code, county)
-  if (is.null(centroid)) {
-    return(list(table = tibble::tibble(), note = "NWS forecast unavailable for the selected region."))
-  }
-
-  fetch_nws_forecast(centroid$lat, centroid$lon)
-}
-
 fetch_fema_disasters <- function(
   state_code,
   years_back = 10,
@@ -352,196 +308,24 @@ summarize_fema_incidents <- function(fema_df, top_n = 8) {
     list(table = _, note = note)
 }
 
+regional_cache <- new.env(parent = emptyenv())
+
+cache_get <- function(cache_key, max_age_minutes = 60) {
+  entry <- regional_cache[[cache_key]]
+  if (is.null(entry)) return(NULL)
+  if (is.null(entry$ts)) return(NULL)
+  age <- as.numeric(difftime(Sys.time(), entry$ts, units = "mins"))
+  if (!is.na(age) && age <= max_age_minutes) return(entry$value)
+  NULL
+}
+
+cache_set <- function(cache_key, value) {
+  regional_cache[[cache_key]] <- list(value = value, ts = Sys.time())
+  value
+}
+
 fetch_cdc_metadata <- function() {
   fetch_json("https://data.cdc.gov/api/views/x9gk-5huc.json")
-}
-
-fetch_storm_events_index <- function(timeout_seconds = 20) {
-  index_url <- "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/"
-  response <- tryCatch(
-    httr::GET(index_url, timeout(timeout_seconds)),
-    error = function(e) NULL
-  )
-
-  if (is.null(response) || httr::http_error(response)) {
-    return(character(0))
-  }
-
-  text <- httr::content(response, as = "text", encoding = "UTF-8")
-  strsplit(text, "\n", fixed = TRUE)[[1]]
-}
-
-resolve_storm_events_files <- function(years) {
-  lines <- fetch_storm_events_index()
-  if (length(lines) == 0) {
-    return(tibble::tibble())
-  }
-  matches <- str_match(
-    lines,
-    "StormEvents_details-ftp_v1\\.0_d(\\d{4})_c(\\d{8})\\.csv\\.gz"
-  )
-
-  files <- tibble::tibble(
-    file = matches[, 1],
-    year = suppressWarnings(as.integer(matches[, 2])),
-    cdate = suppressWarnings(as.integer(matches[, 3]))
-  ) |>
-    filter(!is.na(year)) |>
-    filter(year %in% years) |>
-    group_by(year) |>
-    slice_max(order_by = cdate, n = 1, with_ties = FALSE) |>
-    ungroup()
-
-  if (nrow(files) == 0) {
-    return(tibble::tibble())
-  }
-
-  files |>
-    mutate(url = paste0("https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/", file))
-}
-
-parse_damage_value <- function(value) {
-  raw <- toupper(str_trim(value %||% ""))
-  if (raw == "" || is.na(raw)) return(0)
-
-  multiplier <- 1
-  if (str_ends(raw, "K")) {
-    multiplier <- 1e3
-    raw <- str_remove(raw, "K$")
-  } else if (str_ends(raw, "M")) {
-    multiplier <- 1e6
-    raw <- str_remove(raw, "M$")
-  } else if (str_ends(raw, "B")) {
-    multiplier <- 1e9
-    raw <- str_remove(raw, "B$")
-  }
-
-  suppressWarnings(as.numeric(raw) * multiplier)
-}
-
-download_storm_events_csv <- function(url, timeout_seconds = 30) {
-  tmp <- tempfile(fileext = ".csv.gz")
-  response <- tryCatch(
-    httr::GET(url, write_disk(tmp, overwrite = TRUE), timeout(timeout_seconds)),
-    error = function(e) NULL
-  )
-
-  if (is.null(response) || httr::http_error(response)) {
-    return(NULL)
-  }
-
-  tmp
-}
-
-fetch_nws_storm_events <- function(state_code, years_back = 5, county = NULL) {
-  capped_years <- min(max(years_back, 1), 5)
-  note <- if (years_back > capped_years) {
-    paste0("Storm events history capped at ", capped_years, " years for performance.")
-  } else {
-    NULL
-  }
-
-  current_year <- as.integer(format(Sys.Date(), "%Y"))
-  years <- seq(current_year - capped_years + 1, current_year)
-  files <- resolve_storm_events_files(years)
-
-  if (nrow(files) == 0) {
-    return(list(data = tibble::tibble(), note = note %||% "Storm events data unavailable for the selected range."))
-  }
-
-  state_name <- toupper(state.name[match(state_code, state.abb)] %||% state_code)
-  county_lower <- tolower(county %||% "")
-
-  cols_needed <- c(
-    "STATE", "CZ_NAME", "CZ_TYPE", "EVENT_TYPE", "BEGIN_DATE_TIME",
-    "END_DATE_TIME", "DAMAGE_PROPERTY", "DAMAGE_CROPS",
-    "DEATHS_DIRECT", "DEATHS_INDIRECT", "INJURIES_DIRECT", "INJURIES_INDIRECT"
-  )
-
-  all_rows <- list()
-  for (i in seq_len(nrow(files))) {
-    file_url <- files$url[i]
-    local_file <- download_storm_events_csv(file_url)
-    if (is.null(local_file)) next
-
-    df <- tryCatch(
-      suppressWarnings(readr::read_csv(
-        local_file,
-        show_col_types = FALSE,
-        col_select = any_of(cols_needed)
-      )),
-      error = function(e) tibble::tibble()
-    )
-
-    if (nrow(df) == 0) next
-
-    df <- df |>
-      mutate(
-        STATE = toupper(.data[["STATE"]]),
-        CZ_NAME = .data[["CZ_NAME"]],
-        CZ_TYPE = .data[["CZ_TYPE"]]
-      ) |>
-      filter(STATE == state_name)
-
-    if (nzchar(county_lower)) {
-      df <- df |>
-        filter(toupper(CZ_TYPE) == "C") |>
-        filter(str_detect(tolower(CZ_NAME), fixed(county_lower)))
-    }
-
-    if (nrow(df) > 0) all_rows <- c(all_rows, list(df))
-  }
-
-  if (length(all_rows) == 0) {
-    return(list(data = tibble::tibble(), note = note %||% "Storm events data unavailable for the selected range."))
-  }
-
-  list(data = bind_rows(all_rows), note = note)
-}
-
-summarize_nws_storm_events <- function(nws_result, top_n = 8) {
-  df <- nws_result$data
-  if (nrow(df) == 0) {
-    return(list(table = tibble::tibble(), note = nws_result$note %||% "Storm events data unavailable for the selected range."))
-  }
-
-  summary_tbl <- df |>
-    mutate(
-      event_type = .data[["EVENT_TYPE"]],
-      begin_time = suppressWarnings(as.POSIXct(.data[["BEGIN_DATE_TIME"]], tz = "UTC")),
-      damage_property = map_dbl(.data[["DAMAGE_PROPERTY"]], parse_damage_value),
-      damage_crops = map_dbl(.data[["DAMAGE_CROPS"]], parse_damage_value),
-      deaths = suppressWarnings(as.numeric(.data[["DEATHS_DIRECT"]])) +
-        suppressWarnings(as.numeric(.data[["DEATHS_INDIRECT"]])),
-      injuries = suppressWarnings(as.numeric(.data[["INJURIES_DIRECT"]])) +
-        suppressWarnings(as.numeric(.data[["INJURIES_INDIRECT"]]))
-    ) |>
-    mutate(
-      total_damage = coalesce(damage_property, 0) + coalesce(damage_crops, 0),
-      deaths = coalesce(deaths, 0),
-      injuries = coalesce(injuries, 0)
-    ) |>
-    filter(!is.na(event_type)) |>
-    group_by(event_type) |>
-    summarise(
-      events = n(),
-      total_damage = sum(total_damage, na.rm = TRUE),
-      total_deaths = sum(deaths, na.rm = TRUE),
-      total_injuries = sum(injuries, na.rm = TRUE),
-      year_range = {
-        years <- suppressWarnings(as.integer(format(begin_time, "%Y")))
-        if (all(is.na(years))) {
-          NA_character_
-        } else {
-          paste0(min(years, na.rm = TRUE), "–", max(years, na.rm = TRUE))
-        }
-      },
-      .groups = "drop"
-    ) |>
-    arrange(desc(total_damage), desc(events)) |>
-    slice_head(n = top_n)
-
-  list(table = summary_tbl, note = nws_result$note)
 }
 
 pick_col <- function(fields, patterns) {
@@ -639,10 +423,13 @@ normalize_country_name <- function(name) {
 fetch_outbreaks_dataset <- function(cache_hours = 24) {
   url <- "https://raw.githubusercontent.com/jatorresmunguia/disease_outbreak_news/main/Last%20update/outbreaks_14022026.csv"
   cache_path <- file.path(tempdir(), "outbreaks_14022026.csv")
+  mem_cached <- cache_get("outbreaks_dataset", max_age_minutes = cache_hours * 60)
+  if (!is.null(mem_cached)) return(mem_cached)
   if (file.exists(cache_path)) {
     age_hours <- as.numeric(difftime(Sys.time(), file.info(cache_path)$mtime, units = "hours"))
     if (!is.na(age_hours) && age_hours < cache_hours) {
-      return(readr::read_csv(cache_path, show_col_types = FALSE))
+      df <- readr::read_csv(cache_path, show_col_types = FALSE)
+      return(cache_set("outbreaks_dataset", df))
     }
   }
   resp <- tryCatch(httr::GET(url, timeout(30)), error = function(e) NULL)
@@ -651,7 +438,12 @@ fetch_outbreaks_dataset <- function(cache_hours = 24) {
   }
   raw_text <- httr::content(resp, as = "text", encoding = "UTF-8")
   readr::write_file(raw_text, cache_path)
-  readr::read_csv(cache_path, show_col_types = FALSE)
+  df <- readr::read_csv(cache_path, show_col_types = FALSE)
+  cache_set("outbreaks_dataset", df)
+}
+
+preload_outbreaks_dataset <- function() {
+  tryCatch(fetch_outbreaks_dataset(), error = function(e) tibble::tibble())
 }
 
 summarize_outbreaks_by_disease <- function(country, years_back = 5, top_n = 8) {
@@ -660,13 +452,31 @@ summarize_outbreaks_by_disease <- function(country, years_back = 5, top_n = 8) {
     return(list(table = tibble::tibble(), note = "Global outbreak data unavailable."))
   }
 
+  pick_df_col <- function(df, candidates) {
+    cols <- names(df)
+    lower <- tolower(cols)
+    for (cand in candidates) {
+      idx <- which(lower == cand)
+      if (length(idx) > 0) return(cols[idx[1]])
+    }
+    NULL
+  }
+
+  country_col <- pick_df_col(df, c("country"))
+  year_col <- pick_df_col(df, c("year"))
+  disease_col <- pick_df_col(df, c("disease"))
+  if (is.null(country_col) || is.null(year_col) || is.null(disease_col)) {
+    return(list(table = tibble::tibble(), note = "Outbreak dataset missing required columns."))
+  }
+
   current_year <- as.integer(format(Sys.Date(), "%Y"))
   start_year <- current_year - years_back + 1
   target <- normalize_country_name(country)
   df <- df |>
     mutate(
-      country_norm = normalize_country_name(Country),
-      Year = suppressWarnings(as.integer(Year))
+      country_norm = normalize_country_name(.data[[country_col]]),
+      Year = suppressWarnings(as.integer(.data[[year_col]])),
+      Disease = .data[[disease_col]]
     ) |>
     filter(Year >= start_year, Year <= current_year)
 
@@ -826,7 +636,7 @@ domain_recommendation_map <- list(
   governance = "Clarify plan ownership, approval, drills, and after-action update cadence."
 )
 
-normalize_hazards <- function(fema_summary, cdc_summary, nws_summary, outbreaks_summary = NULL) {
+normalize_hazards <- function(fema_summary, cdc_summary, outbreaks_summary = NULL) {
   # Combine FEMA/CDC/NWS summaries into a unified hazard table.
   hazards <- list()
   current_year <- as.integer(format(Sys.Date(), "%Y"))
@@ -861,22 +671,6 @@ normalize_hazards <- function(fema_summary, cdc_summary, nws_summary, outbreaks_
       ) |>
       select(hazard_type, hazard_label, source, frequency, recency_years, severity, last_year)
     hazards <- c(hazards, list(cdc_rows))
-  }
-
-  if (!is.null(nws_summary$table) && nrow(nws_summary$table) > 0) {
-    nws_rows <- nws_summary$table |>
-      mutate(
-        hazard_info = map(event_type, ~ normalize_hazard_type(.x, "NWS")),
-        hazard_type = map_chr(hazard_info, "type"),
-        hazard_label = map_chr(hazard_info, "label"),
-        source = "NWS",
-        frequency = events,
-        last_year = parse_year_range_end(year_range),
-        recency_years = ifelse(is.na(last_year), NA_real_, current_year - last_year),
-        severity = total_damage + (total_deaths * 1e6) + (total_injuries * 1e4)
-      ) |>
-      select(hazard_type, hazard_label, source, frequency, recency_years, severity, last_year)
-    hazards <- c(hazards, list(nws_rows))
   }
 
   if (!is.null(outbreaks_summary$table) && nrow(outbreaks_summary$table) > 0) {
@@ -1084,7 +878,7 @@ worst_status <- function(statuses) {
   "present"
 }
 
-build_coverage_table <- function(fema_summary, cdc_summary, nws_summary, extraction) {
+build_coverage_table <- function(fema_summary, cdc_summary, extraction) {
   domain_status <- normalize_domains(extraction$domains)
   status_map <- setNames(
     tolower(map_chr(domain_status, "status")),
@@ -1121,20 +915,6 @@ build_coverage_table <- function(fema_summary, cdc_summary, nws_summary, extract
     coverage_rows <- c(coverage_rows, list(cdc_rows))
   }
 
-  if (nrow(nws_summary$table) > 0) {
-    nws_rows <- nws_summary$table |>
-      mutate(
-        source = "NWS Storm Events",
-        event = event_type,
-        count = events,
-        required_domains = map(event, map_incident_to_domains),
-        coverage = map_chr(required_domains, ~ worst_status(status_map[.x]))
-      ) |>
-      select(source, event, count, coverage, required_domains)
-
-    coverage_rows <- c(coverage_rows, list(nws_rows))
-  }
-
   if (length(coverage_rows) == 0) {
     return(tibble::tibble())
   }
@@ -1146,7 +926,7 @@ build_coverage_table <- function(fema_summary, cdc_summary, nws_summary, extract
     select(source, event, count, coverage, domains)
 }
 
-build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, nws_summary, weather_summary, coverage_table) {
+build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, coverage_table) {
   plan_status <- normalize_domains(extraction$domains)
   plan_json <- toJSON(plan_status, auto_unbox = TRUE, pretty = TRUE)
 
@@ -1168,23 +948,10 @@ build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, nws
     "[]"
   }
 
-  nws_json <- if (nrow(nws_summary$table) > 0) {
-    toJSON(nws_summary$table, auto_unbox = TRUE, pretty = TRUE)
-  } else {
-    "[]"
-  }
-
-  weather_json <- if (nrow(weather_summary$table) > 0) {
-    toJSON(weather_summary$table, auto_unbox = TRUE, pretty = TRUE)
-  } else {
-    "[]"
-  }
-
   paste(
     "You are a healthcare emergency preparedness consultant.",
     "Interpret the gap between plan coverage and local historical incident patterns.",
-    "Use FEMA disaster declarations, CDC notifiable disease patterns, and NWS Storm Events damage history to highlight mismatches.",
-    "Use the current NWS forecast to add situational context (do not treat forecast as historical evidence).",
+    "Use FEMA disaster declarations and CDC notifiable disease patterns to highlight mismatches.",
     "Return JSON only in the schema:",
     "{\"summary\":\"...\",\"gap_insights\":[{\"pattern\":\"...\",\"coverage\":\"present|partial|missing\",\"impact\":\"...\"}],\"recommended_focus\":[\"...\"]}",
     "\nPlan domain status:",
@@ -1193,10 +960,6 @@ build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, nws
     fema_json,
     "\nCDC condition summary:",
     cdc_json,
-    "\nNWS Storm Events summary:",
-    nws_json,
-    "\nNWS Forecast snapshot:",
-    weather_json,
     "\nCoverage crosswalk:",
     coverage_json
   )
@@ -1212,12 +975,32 @@ build_regional_analysis <- function(
   fema_types = c("DR", "EM"),
   incident_types = character(0)
 ) {
+  timing_mark <- function(label, start_time) {
+    elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+    message(sprintf("[timing] %s: %.2fs", label, elapsed))
+  }
+
+  t0 <- Sys.time()
+  cache_key_base <- paste(
+    region_country %||% "",
+    region_state %||% "",
+    region_county %||% "",
+    history_years %||% "",
+    paste(fema_types %||% "", collapse = ","),
+    paste(incident_types %||% "", collapse = ","),
+    sep = "|"
+  )
+
   non_us <- !is.null(region_country) && tolower(region_country) != "united states"
 
   fema_note <- NULL
+  t_fema <- Sys.time()
+  cached_fema <- cache_get(paste0("fema|", cache_key_base), max_age_minutes = 180)
   fema_df <- if (non_us) {
     fema_note <- "FEMA data is U.S.-only."
     tibble::tibble()
+  } else if (!is.null(cached_fema)) {
+    cached_fema
   } else {
     tryCatch(
       fetch_fema_disasters(
@@ -1233,6 +1016,10 @@ build_regional_analysis <- function(
       }
     )
   }
+  if (!non_us) {
+    cache_set(paste0("fema|", cache_key_base), fema_df)
+  }
+  timing_mark("FEMA fetch+cache", t_fema)
 
   if (nrow(fema_df) == 0 &&
       !is.null(region_county) &&
@@ -1272,6 +1059,8 @@ build_regional_analysis <- function(
     )
   }
 
+  t_cdc <- Sys.time()
+  cached_cdc <- cache_get(paste0("cdc|", cache_key_base), max_age_minutes = 180)
   cdc_result <- if (non_us) {
     list(data = tibble::tibble(), cols = list(), note = "CDC data is U.S.-only.")
   } else if (is.null(region_state) || !nzchar(region_state) || toupper(region_state) == "NA") {
@@ -1280,37 +1069,84 @@ build_regional_analysis <- function(
       cols = list(),
       note = "CDC data requires a U.S. state/territory selection."
     )
+  } else if (!is.null(cached_cdc)) {
+    cached_cdc
   } else {
     tryCatch(
       fetch_cdc_nndss(region_state, years_back = max(3, history_years %/% 2)),
       error = function(e) list(data = tibble::tibble(), cols = list(), note = "CDC data temporarily unavailable.")
     )
   }
+  if (!non_us && nzchar(region_state %||% "") && toupper(region_state) != "NA") {
+    cache_set(paste0("cdc|", cache_key_base), cdc_result)
+  }
+  timing_mark("CDC fetch+cache", t_cdc)
 
   cdc_summary <- tryCatch(
     summarize_cdc_conditions(cdc_result),
     error = function(e) list(table = tibble::tibble(), note = "CDC data temporarily unavailable.")
   )
 
-  nws_result <- if (non_us) {
-    list(data = tibble::tibble(), note = "NWS data is U.S.-only.")
-  } else {
-    fetch_nws_storm_events(region_state, years_back = history_years, county = region_county)
+  t_outbreaks <- Sys.time()
+  outbreaks_cache_key <- paste0("outbreaks|", normalize_country_name(region_country), "|", history_years)
+  outbreaks_summary <- cache_get(outbreaks_cache_key, max_age_minutes = 360)
+  if (is.null(outbreaks_summary)) {
+    outbreaks_summary <- summarize_outbreaks_by_disease(region_country, years_back = history_years)
+    cache_set(outbreaks_cache_key, outbreaks_summary)
   }
-  nws_summary <- summarize_nws_storm_events(nws_result)
+  timing_mark("Outbreaks summary", t_outbreaks)
 
-  weather_summary <- if (non_us) {
-    list(table = tibble::tibble(), note = "NWS forecast is U.S.-only.")
-  } else {
-    fetch_nws_forecast_for_region(region_state, region_county)
+  coverage_table <- build_coverage_table(fema_summary, cdc_summary, extraction)
+  t_hazards <- Sys.time()
+  hazard_table <- tryCatch(
+    normalize_hazards(fema_summary, cdc_summary, outbreaks_summary),
+    error = function(e) tibble::tibble()
+  )
+  if (nrow(hazard_table) == 0 && nrow(fema_summary$table) > 0) {
+    current_year <- as.integer(format(Sys.Date(), "%Y"))
+    hazard_table <- fema_summary$table |>
+      mutate(
+        hazard_type = "fema_incident",
+        hazard_label = incidentType,
+        source = "FEMA",
+        frequency = events,
+        last_year = parse_year_range_end(year_range),
+        recency_years = ifelse(is.na(last_year), NA_real_, current_year - last_year),
+        severity = NA_real_
+      ) |>
+      select(hazard_type, hazard_label, source, frequency, recency_years, severity, last_year)
   }
-
-  outbreaks_summary <- summarize_outbreaks_by_disease(region_country, years_back = history_years)
-
-  coverage_table <- build_coverage_table(fema_summary, cdc_summary, nws_summary, extraction)
-  hazard_table <- normalize_hazards(fema_summary, cdc_summary, nws_summary, outbreaks_summary)
-  hazard_table <- score_hazards(hazard_table)
-  hazard_eval <- evaluate_hazard_coverage(plan_text, hazard_table, extraction$domains, max_n = 5)
+  hazard_table <- tryCatch(
+    score_hazards(hazard_table),
+    error = function(e) hazard_table
+  )
+  if (nrow(hazard_table) == 0 && nrow(fema_summary$table) > 0) {
+    current_year <- as.integer(format(Sys.Date(), "%Y"))
+    hazard_table <- fema_summary$table |>
+      mutate(
+        hazard_type = "fema_incident",
+        hazard_label = incidentType,
+        source = "FEMA",
+        frequency = events,
+        last_year = parse_year_range_end(year_range),
+        recency_years = ifelse(is.na(last_year), NA_real_, current_year - last_year),
+        severity = NA_real_,
+        priority_score = 0.5,
+        priority = "Moderate"
+      ) |>
+      select(hazard_type, hazard_label, source, frequency, recency_years, severity, last_year, priority, priority_score)
+  }
+  timing_mark("Hazard normalize+score", t_hazards)
+  t_llm <- Sys.time()
+  plan_key <- paste0("plan|", nchar(plan_text %||% ""), "|", substr(plan_text %||% "", 1, 120))
+  hazard_eval_key <- paste0("hazard_eval|", cache_key_base, "|", plan_key)
+  hazard_eval <- cache_get(hazard_eval_key, max_age_minutes = 360)
+  if (is.null(hazard_eval)) {
+    hazard_eval <- evaluate_hazard_coverage(plan_text, hazard_table, extraction$domains, max_n = 2)
+    cache_set(hazard_eval_key, hazard_eval)
+  }
+  timing_mark("Hazard LLM eval", t_llm)
+  timing_mark("Regional analysis total", t0)
 
   hazard_priority <- if (nrow(hazard_table) > 0) {
     hazard_table |>
@@ -1319,6 +1155,36 @@ build_regional_analysis <- function(
         priority_score = round(priority_score, 2)
       ) |>
       select(hazard_label, source, frequency, recency_years, severity, priority, priority_score)
+  } else {
+    tibble::tibble()
+  }
+
+  hazard_identified <- if (nrow(hazard_table) > 0) {
+    base <- hazard_table |>
+      select(hazard_label, source, frequency, last_year) |>
+      mutate(
+        year_range = ifelse(
+          !is.na(last_year),
+          paste0(last_year, "–", last_year),
+          NA_character_
+        )
+      )
+
+    if (nrow(fema_summary$table) > 0) {
+      fema_years <- fema_summary$table |>
+        select(incidentType, year_range)
+      base <- base |>
+        left_join(fema_years, by = c("hazard_label" = "incidentType"), suffix = c("", "_fema")) |>
+        mutate(
+          year_range = ifelse(source == "FEMA" & !is.na(year_range_fema), year_range_fema, year_range)
+        ) |>
+        select(hazard_label, source, frequency, year_range)
+    } else {
+      base <- base |>
+        select(hazard_label, source, frequency, year_range)
+    }
+
+    base
   } else {
     tibble::tibble()
   }
@@ -1364,13 +1230,12 @@ build_regional_analysis <- function(
   list(
     fema = fema_summary,
     cdc = cdc_summary,
-    nws = nws_summary,
-    weather = weather_summary,
     coverage = coverage_table,
     outbreaks = outbreaks_summary,
     hazards = hazard_table,
     hazard_eval = hazard_eval,
     hazard_priority = hazard_priority,
+    hazard_identified = hazard_identified,
     hazard_domain_coverage = hazard_domain_coverage
   )
 }

@@ -16,6 +16,8 @@ source("R/scoring.R")
 source("R/ui_helpers.R")
 source("R/region_data.R")
 
+preload_outbreaks_dataset()
+
 ui <- fluidPage(
   tags$head(
     tags$link(rel = "stylesheet", type = "text/css", href = "styles.css"),
@@ -205,6 +207,13 @@ ui <- fluidPage(
               } else {
                 tableOutput("hazard_priority_table")
               },
+              uiOutput("hazard_priority_note"),
+              h3("Identified Hazards"),
+              if (has_shinycssloaders) {
+                shinycssloaders::withSpinner(tableOutput("hazard_identified_table"))
+              } else {
+                tableOutput("hazard_identified_table")
+              },
               if (has_shinycssloaders) {
                 shinycssloaders::withSpinner(uiOutput("hazard_analysis"))
               } else {
@@ -222,7 +231,7 @@ ui <- fluidPage(
                 uiOutput("regional_gap")
               },
               tags$details(
-                tags$summary("Raw Source Data (FEMA / CDC / NWS)"),
+                tags$summary("Raw Source Data (FEMA / CDC)"),
                 h3("FEMA Incident Patterns"),
                 if (has_shinycssloaders) {
                   shinycssloaders::withSpinner(tableOutput("fema_table"))
@@ -236,21 +245,7 @@ ui <- fluidPage(
                 } else {
                   tableOutput("cdc_table")
                 },
-                uiOutput("cdc_note"),
-                h3("NWS Forecast Snapshot"),
-                if (has_shinycssloaders) {
-                  shinycssloaders::withSpinner(tableOutput("nws_forecast"))
-                } else {
-                  tableOutput("nws_forecast")
-                },
-                uiOutput("nws_forecast_note"),
-                h3("NWS Storm Events (History Window)"),
-                if (has_shinycssloaders) {
-                  shinycssloaders::withSpinner(tableOutput("nws_table"))
-                } else {
-                  tableOutput("nws_table")
-                },
-                uiOutput("nws_note")
+                uiOutput("cdc_note")
               ),
               tags$details(
                 tags$summary("Global Outbreak Data (Disease Outbreak News)"),
@@ -298,16 +293,6 @@ server <- function(input, output, session) {
         `Year Range` = year_range
       )
   }
-  pretty_nws_table <- function(df) {
-    if (is.null(df) || nrow(df) == 0) return(df)
-    df |>
-      dplyr::rename(
-        `Event Type` = event_type,
-        Events = events,
-        `Year Range` = year_range,
-        `Total Damage` = total_damage
-      )
-  }
   pretty_coverage_table <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
     df |>
@@ -317,15 +302,6 @@ server <- function(input, output, session) {
         Events = count,
         Coverage = coverage,
         Domains = domains
-      )
-  }
-  pretty_forecast_table <- function(df) {
-    if (is.null(df) || nrow(df) == 0) return(df)
-    df |>
-      dplyr::rename(
-        Period = period,
-        Forecast = forecast,
-        `Temp (F)` = temp_f
       )
   }
   pretty_domains <- function(domain_text) {
@@ -580,6 +556,36 @@ server <- function(input, output, session) {
       )
   }, rownames = FALSE)
 
+  output$hazard_identified_table <- renderTable({
+    df <- analysis_result()$regional$hazard_identified
+    if (is.null(df) || nrow(df) == 0) return(df)
+    df |>
+      dplyr::rename(
+        Hazard = hazard_label,
+        Source = source,
+        Events = frequency,
+        `Year Range` = year_range
+      )
+  }, rownames = FALSE)
+
+  output$hazard_priority_note <- renderUI({
+    res <- analysis_result()$regional
+    hazard_df <- res$hazard_priority
+    if (!is.null(hazard_df) && nrow(hazard_df) > 0) return(NULL)
+    fema_n <- nrow(res$fema$table %||% tibble::tibble())
+    cdc_n <- nrow(res$cdc$table %||% tibble::tibble())
+    outbreak_n <- nrow(res$outbreaks$table %||% tibble::tibble())
+    tags$p(
+      class = "hint",
+      paste0(
+        "No hazards found. FEMA rows: ", fema_n,
+        "; CDC rows: ", cdc_n,
+        "; Outbreak rows: ", outbreak_n,
+        ". Check filters or year window."
+      )
+    )
+  })
+
   output$hazard_domain_table <- renderTable({
     df <- analysis_result()$regional$hazard_domain_coverage
     if (is.null(df) || nrow(df) == 0) return(df)
@@ -600,24 +606,6 @@ server <- function(input, output, session) {
 
   output$outbreaks_note <- renderUI({
     note <- analysis_result()$regional$outbreaks$note
-    if (!is.null(note) && nzchar(note)) tags$p(class = "hint", note)
-  })
-
-  output$nws_forecast <- renderTable({
-    pretty_forecast_table(analysis_result()$regional$weather$table)
-  }, rownames = FALSE)
-
-  output$nws_forecast_note <- renderUI({
-    note <- analysis_result()$regional$weather$note
-    if (!is.null(note) && nzchar(note)) tags$p(class = "hint", note)
-  })
-
-  output$nws_table <- renderTable({
-    pretty_nws_table(analysis_result()$regional$nws$table)
-  }, rownames = FALSE)
-
-  output$nws_note <- renderUI({
-    note <- analysis_result()$regional$nws$note
     if (!is.null(note) && nzchar(note)) tags$p(class = "hint", note)
   })
 

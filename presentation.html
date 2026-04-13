@@ -135,10 +135,15 @@
 <section id="introduction" class="slide level2 center">
 <h2>Introduction</h2>
 <ul>
-<li>Emergency preparedness plans are long and can be tedious, even with general templates.</li>
-<li>Evaluating plans to meet changing guidelines can be challenging.</li>
-<li>FEMA changing guidelines with new administration.</li>
-<li>Reviewing these documents often is also important to ensure preparedness and accuracy.</li>
+<li>Emergency preparedness plans are often long and can be tedious, even with general templates offered by organizations like FEMA.
+<ul>
+<li>Can be hard to tailor for specific organization</li>
+</ul></li>
+<li>Evaluating plans to meet changing guidelines can be challenging
+<ul>
+<li>FEMA changing guidelines with new administration</li>
+</ul></li>
+<li>Reviewing these documents often is also important to ensure preparedness and accuracy</li>
 </ul>
 </section>
 <section id="what-does-my-app-do" class="slide level2 center">
@@ -150,16 +155,29 @@
 <li>WHO Emergency Response Framework (ERF)</li>
 <li>Helps the user not to have to constantly recall or reference the general guidelines.</li>
 <li>Streamlines first reviews of document to identify major challenges.</li>
-<li>Looks at historical data of natural disasters, outbreaks, and weather patterns to identify common events to plan for based on region.</li>
+<li>Looks at historical data of natural disasters and outbreaks to identify common events to plan for based on region.</li>
 </ul>
 </section>
 <section id="how-does-it-do-this" class="slide level2 center">
 <h2>How Does It Do This?</h2>
 <ul>
-<li>Shiny app.</li>
-<li>Actively pulls data from the FEMA website, CDC, WHO, and a disease outbreaks website.</li>
+<li>Shiny app</li>
+<li>Actively pulls data from the FEMA website, CDC, WHO, and a disease outbreaks website.
+<ul>
+<li>Uses FEMA, CDC, and WHO frameworks as scoring and analysis tools</li>
+<li>Uses additional data to identify regional historical hazards</li>
+</ul></li>
 <li>Uses an LLM through GEMINI to interpret the guidelines, score the plan, identify gaps, and provide recommendations based off of results.</li>
-<li>It also takes historical disasters reported from these websites to identify location specific or hazard specific gaps.</li>
+</ul>
+</section>
+<section id="improvements" class="slide level2 center">
+<h2>Improvements</h2>
+<ul>
+<li>Identify more specific frameworks such as for hospitals (ie. Centers for Medicare and Medicaid Services)</li>
+<li>Further expand interpretations and recommendations to be more helpful for users</li>
+<li>Better define scoring _ Organize outbreaks data to be by state instead of by country</li>
+<li>include weather data</li>
+<li>Make the overall app more visually appealing</li>
 </ul>
 
 </section>

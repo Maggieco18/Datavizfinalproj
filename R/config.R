@@ -26,7 +26,10 @@ app_config <- list(
   llm_model = get_env_nonempty("LLM_MODEL", llm_model_default),
   llm_temperature = as.numeric(get_env_nonempty("LLM_TEMPERATURE", "0.2")),
   llm_timeout = as.numeric(get_env_nonempty("LLM_TIMEOUT", "60")),
-  cdc_app_token = get_env_nonempty("CDC_APP_TOKEN", "")
+  cdc_app_token = get_env_nonempty("CDC_APP_TOKEN", ""),
+  cdc_source = get_env_nonempty("CDC_SOURCE", "wonder"),
+  cdc_wonder_request = get_env_nonempty("CDC_WONDER_REQUEST", "data/cdc_wonder_request.xml"),
+  cdc_wonder_response = get_env_nonempty("CDC_WONDER_RESPONSE", "data/cdc_wonder_response.csv")
 )
 
 fema_guidance <- list(

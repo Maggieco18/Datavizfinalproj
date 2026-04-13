@@ -5,6 +5,12 @@ fetch_json <- function(url, query = list(), headers = list(), timeout_seconds = 
   if (!is.null(headers) && length(headers) > 0) {
     header_vec <- unlist(headers, use.names = TRUE)
   }
+  if (is.null(names(header_vec)) || !("User-Agent" %in% names(header_vec))) {
+    header_vec <- c(header_vec, "User-Agent" = "datavizfinalproject/1.0")
+  }
+  if (is.null(names(header_vec)) || !("Accept" %in% names(header_vec))) {
+    header_vec <- c(header_vec, "Accept" = "application/json")
+  }
 
   response <- httr::GET(
     url = url,
@@ -328,6 +334,248 @@ fetch_cdc_metadata <- function() {
   fetch_json("https://data.cdc.gov/api/views/x9gk-5huc.json")
 }
 
+read_wonder_request <- function(path) {
+  if (!file.exists(path)) {
+    return(list(params = list(), note = paste0("CDC WONDER request file not found at ", path)))
+  }
+
+  if (requireNamespace("xml2", quietly = TRUE)) {
+    xml <- xml2::read_xml(path)
+    nodes <- xml2::xml_find_all(xml, ".//parameter")
+    names <- xml2::xml_text(xml2::xml_find_first(nodes, ".//name"))
+    values <- xml2::xml_text(xml2::xml_find_first(nodes, ".//value"))
+    params <- as.list(values)
+    names(params) <- names
+    return(list(params = params, note = NULL))
+  }
+
+  text <- readLines(path, warn = FALSE, encoding = "UTF-8")
+  text <- paste(text, collapse = "")
+  names <- str_match_all(text, "<name>(.*?)</name>")[[1]][, 2]
+  values <- str_match_all(text, "<value>(.*?)</value>")[[1]][, 2]
+  if (length(names) == 0 || length(values) == 0) {
+    return(list(params = list(), note = "CDC WONDER request file could not be parsed."))
+  }
+  len <- min(length(names), length(values))
+  params <- as.list(values[seq_len(len)])
+  names(params) <- names[seq_len(len)]
+  list(params = params, note = NULL)
+}
+
+normalize_state_token <- function(value) {
+  value <- toupper(value %||% "")
+  value <- str_replace_all(value, "[^A-Z]", "")
+  value
+}
+
+read_wonder_response_csv <- function(path) {
+  if (!file.exists(path)) {
+    return(list(data = tibble::tibble(), note = paste0("CDC WONDER response file not found at ", path)))
+  }
+  df <- tryCatch(
+    suppressWarnings(readr::read_csv(path, show_col_types = FALSE, progress = FALSE)),
+    error = function(e) tibble::tibble()
+  )
+  if (nrow(df) == 0) {
+    return(list(data = tibble::tibble(), note = "CDC WONDER response file is empty or unreadable."))
+  }
+  list(data = df, note = NULL)
+}
+
+parse_wonder_csv <- function(text) {
+  if (!nzchar(text)) {
+    return(tibble::tibble())
+  }
+
+  if (str_detect(text, "<html") || str_detect(text, "Request failed") || str_detect(text, "ERROR")) {
+    return(tibble::tibble())
+  }
+
+  lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
+  lines <- lines[!str_detect(lines, "^\\s*$")]
+  if (length(lines) == 0) return(tibble::tibble())
+
+  header_idx <- which(str_detect(lines, "Year") & str_detect(lines, "Condition"))
+  if (length(header_idx) == 0) {
+    header_idx <- which(str_detect(lines, "Year") | str_detect(lines, "Condition") | str_detect(lines, "State"))
+  }
+  if (length(header_idx) == 0) {
+    header_idx <- 1
+  } else {
+    header_idx <- header_idx[1]
+  }
+
+  csv_text <- paste(lines[header_idx:length(lines)], collapse = "\n")
+  df <- tryCatch(
+    suppressWarnings(readr::read_csv(I(csv_text), show_col_types = FALSE, progress = FALSE)),
+    error = function(e) tibble::tibble()
+  )
+
+  if (nrow(df) == 0) return(df)
+
+  df <- df |>
+    filter(!if_all(everything(), ~ is.na(.x)))
+
+  df
+}
+
+fetch_cdc_wonder_nndss <- function(state_code, years_back = 5) {
+  request_path <- app_config$cdc_wonder_request %||% ""
+  request <- read_wonder_request(request_path)
+  if (length(request$params) == 0) {
+    return(list(data = tibble::tibble(), cols = list(), note = request$note %||% "CDC WONDER request template missing."))
+  }
+
+  params <- request$params
+  dataset_code <- params$dataset_code %||% "D130"
+  endpoint <- paste0("https://wonder.cdc.gov/controller/datarequest/", dataset_code)
+
+  params[["O_export-format"]] <- "csv"
+  params[["O_javascript"]] <- "off"
+  params[["O_timeout"]] <- params[["O_timeout"]] %||% "600"
+  params[["action-Send"]] <- "Send"
+  params[["stage"]] <- "request"
+
+  year_key <- paste0("V_", dataset_code, ".V1")
+  state_key <- paste0("V_", dataset_code, ".V2")
+  condition_key <- paste0("V_", dataset_code, ".V3")
+
+  if (!year_key %in% names(params)) {
+    year_key <- names(params)[str_detect(names(params), "\\.V1$")][1] %||% year_key
+  }
+  if (!state_key %in% names(params)) {
+    state_key <- names(params)[str_detect(names(params), "\\.V2$")][1] %||% state_key
+  }
+  if (!condition_key %in% names(params)) {
+    condition_key <- names(params)[str_detect(names(params), "\\.V3$")][1] %||% condition_key
+  }
+
+  params[[year_key]] <- "*All*"
+  params[[condition_key]] <- "*All*"
+
+  state_name <- state.name[match(state_code, state.abb)] %||% state_code
+  state_candidates <- c(state_code, state_name, "*All*")
+
+  post_wonder <- function(request_params, use_response = FALSE) {
+    response <- tryCatch(
+      httr::POST(
+        endpoint,
+        body = request_params,
+        encode = "form",
+        timeout(60),
+        user_agent("datavizfinalproject/1.0"),
+        add_headers(
+          "Accept" = "text/csv, text/plain, */*",
+          "Content-Type" = "application/x-www-form-urlencoded"
+        )
+      ),
+      error = function(e) NULL
+    )
+    if (is.null(response) || httr::http_error(response)) {
+      return(NULL)
+    }
+    if (use_response) return(response)
+    httr::content(response, as = "text", encoding = "UTF-8")
+  }
+
+  response_text <- NULL
+  response_obj <- NULL
+  used_state_value <- NULL
+  for (state_value in state_candidates) {
+    params[[state_key]] <- state_value
+    response_obj <- post_wonder(params, use_response = TRUE)
+    response_text <- if (is.null(response_obj)) NULL else httr::content(response_obj, as = "text", encoding = "UTF-8")
+    if (!is.null(response_text) && nzchar(response_text)) {
+      used_state_value <- state_value
+      break
+    }
+  }
+
+  if (is.null(response_text)) {
+    response_path <- app_config$cdc_wonder_response %||% ""
+    fallback <- read_wonder_response_csv(response_path)
+    if (nrow(fallback$data) > 0) {
+      df <- fallback$data
+      note <- "CDC WONDER live request failed; using cached response file."
+    } else {
+      return(list(data = tibble::tibble(), cols = list(), note = "CDC WONDER request failed. Try re-exporting the WONDER API request with O_export-format=csv and ensure no CAPTCHA is required."))
+    }
+  } else {
+    df <- parse_wonder_csv(response_text)
+    note <- NULL
+  }
+  if (!is.null(response_obj) && !is.null(response_text)) {
+    content_type <- httr::headers(response_obj)[["content-type"]] %||% ""
+    if (!str_detect(tolower(content_type), "csv") && str_detect(tolower(response_text), "<html")) {
+      response_path <- app_config$cdc_wonder_response %||% ""
+      fallback <- read_wonder_response_csv(response_path)
+      if (nrow(fallback$data) > 0) {
+        df <- fallback$data
+        note <- "CDC WONDER returned HTML; using cached response file."
+      } else {
+        return(list(data = tibble::tibble(), cols = list(), note = "CDC WONDER returned HTML (likely blocked or agreement required). Please open the WONDER site, accept any agreement, then re-export the API request and response as CSV."))
+      }
+    }
+  }
+
+  if (nrow(df) == 0) {
+    response_path <- app_config$cdc_wonder_response %||% ""
+    fallback <- read_wonder_response_csv(response_path)
+    if (nrow(fallback$data) > 0) {
+      df <- fallback$data
+      note <- "CDC WONDER returned no data; using cached response file."
+    } else {
+      return(list(data = tibble::tibble(), cols = list(), note = "CDC WONDER returned no data (or HTML). Re-export the API request and ensure the response is CSV."))
+    }
+  }
+
+  cols <- names(df)
+  state_col <- pick_col(cols, c("state", "states", "jurisdiction", "reporting area"))
+  year_col <- pick_col(cols, c("year"))
+  condition_col <- pick_col(cols, c("condition", "disease"))
+  cases_col <- pick_col(cols, c("case count", "cases", "count", "number"))
+
+  if (!is.null(state_col)) {
+    state_code_norm <- normalize_state_token(state_code)
+    state_name_norm <- normalize_state_token(state_name)
+    target_tokens <- c(state_code_norm, state_name_norm)
+    if (state_code_norm %in% c("US", "USA") || state_name_norm %in% c("UNITEDSTATES")) {
+      target_tokens <- unique(c(target_tokens, "US", "USA", "UNITEDSTATES"))
+    }
+    allow_all <- isTRUE(used_state_value == "*All*")
+    df <- df |>
+      mutate(.state_norm = normalize_state_token(.data[[state_col]])) |>
+      filter(if (allow_all) TRUE else .state_norm %in% target_tokens) |>
+      select(-.state_norm)
+  }
+
+  if (!is.null(year_col)) {
+    start_year <- as.integer(format(Sys.Date(), "%Y")) - years_back
+    df <- df |>
+      mutate(.cdc_year = suppressWarnings(as.integer(.data[[year_col]]))) |>
+      filter(is.na(.cdc_year) | .cdc_year >= start_year) |>
+      select(-.cdc_year)
+  }
+
+  if (!is.null(condition_col)) {
+    df <- df |>
+      filter(!is.na(.data[[condition_col]])) |>
+      filter(!str_detect(tolower(.data[[condition_col]]), "^total$"))
+  }
+
+  list(
+    data = df,
+    cols = list(
+      state = state_col,
+      year = year_col,
+      week = NULL,
+      condition = condition_col,
+      cases = cases_col
+    ),
+    note = note
+  )
+}
+
 pick_col <- function(fields, patterns) {
   lower_fields <- tolower(fields)
   for (pattern in patterns) {
@@ -337,7 +585,7 @@ pick_col <- function(fields, patterns) {
   NULL
 }
 
-fetch_cdc_nndss <- function(state_code, years_back = 5) {
+fetch_cdc_nndss_socrata <- function(state_code, years_back = 5) {
   metadata <- tryCatch(fetch_cdc_metadata(), error = function(e) NULL)
   fields <- metadata$columns$fieldName %||% character(0)
 
@@ -377,13 +625,17 @@ fetch_cdc_nndss <- function(state_code, years_back = 5) {
 
   base_url <- "https://data.cdc.gov/resource/x9gk-5huc.json"
   records <- list()
+  error_note <- NULL
   offset <- 0
 
   repeat {
     query[["$offset"]] <- offset
     batch <- tryCatch(
       fetch_json(base_url, query = query, headers = headers),
-      error = function(e) list()
+      error = function(e) {
+        error_note <<- conditionMessage(e)
+        list()
+      }
     )
 
     if (length(batch) == 0) break
@@ -397,7 +649,14 @@ fetch_cdc_nndss <- function(state_code, years_back = 5) {
   df <- if (length(records) == 0) tibble::tibble() else tibble::as_tibble(records)
 
   if (nrow(df) == 0) {
-    return(list(data = tibble::tibble(), cols = list(), note = "CDC data temporarily unavailable."))
+    note <- "CDC data temporarily unavailable."
+    if (!is.null(error_note) && nzchar(error_note)) {
+      note <- paste0(note, " ", error_note)
+    }
+    if (!nzchar(app_config$cdc_app_token %||% "")) {
+      note <- paste0(note, " Add CDC_APP_TOKEN to increase access.")
+    }
+    return(list(data = tibble::tibble(), cols = list(), note = note))
   }
 
   list(
@@ -411,6 +670,14 @@ fetch_cdc_nndss <- function(state_code, years_back = 5) {
     ),
     note = NULL
   )
+}
+
+fetch_cdc_nndss <- function(state_code, years_back = 5) {
+  source <- tolower(app_config$cdc_source %||% "wonder")
+  if (source == "wonder") {
+    return(fetch_cdc_wonder_nndss(state_code, years_back = years_back))
+  }
+  fetch_cdc_nndss_socrata(state_code, years_back = years_back)
 }
 
 normalize_country_name <- function(name) {
@@ -860,73 +1127,7 @@ map_cdc_to_domains <- function(condition) {
   c("communication", "workforce", "supply_chain", "surge_planning", "risk_assessment", "continuity")
 }
 
-status_rank <- function(status) {
-  status <- tolower(status %||% "missing")
-  dplyr::case_when(
-    status == "present" ~ 3,
-    status == "partial" ~ 2,
-    status == "missing" ~ 1,
-    TRUE ~ 1
-  )
-}
-
-worst_status <- function(statuses) {
-  if (length(statuses) == 0) return("missing")
-  statuses <- ifelse(is.na(statuses), "missing", statuses)
-  if (any(tolower(statuses) == "missing")) return("missing")
-  if (any(tolower(statuses) == "partial")) return("partial")
-  "present"
-}
-
-build_coverage_table <- function(fema_summary, cdc_summary, extraction) {
-  domain_status <- normalize_domains(extraction$domains)
-  status_map <- setNames(
-    tolower(map_chr(domain_status, "status")),
-    map_chr(domain_status, "id")
-  )
-
-  coverage_rows <- list()
-
-  if (nrow(fema_summary$table) > 0) {
-    fema_rows <- fema_summary$table |>
-      mutate(
-        source = "FEMA",
-        event = incidentType,
-        count = events,
-        required_domains = map(event, map_incident_to_domains),
-        coverage = map_chr(required_domains, ~ worst_status(status_map[.x]))
-      ) |>
-      select(source, event, count, coverage, required_domains)
-
-    coverage_rows <- c(coverage_rows, list(fema_rows))
-  }
-
-  if (nrow(cdc_summary$table) > 0) {
-    cdc_rows <- cdc_summary$table |>
-      mutate(
-        source = "CDC",
-        event = condition,
-        count = cases,
-        required_domains = map(event, map_cdc_to_domains),
-        coverage = map_chr(required_domains, ~ worst_status(status_map[.x]))
-      ) |>
-      select(source, event, count, coverage, required_domains)
-
-    coverage_rows <- c(coverage_rows, list(cdc_rows))
-  }
-
-  if (length(coverage_rows) == 0) {
-    return(tibble::tibble())
-  }
-
-  bind_rows(coverage_rows) |>
-    mutate(
-      domains = map_chr(required_domains, ~ paste(.x, collapse = ", "))
-    ) |>
-    select(source, event, count, coverage, domains)
-}
-
-build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, coverage_table) {
+build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, outbreaks_summary) {
   plan_status <- normalize_domains(extraction$domains)
   plan_json <- toJSON(plan_status, auto_unbox = TRUE, pretty = TRUE)
 
@@ -942,16 +1143,16 @@ build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, cov
     "[]"
   }
 
-  coverage_json <- if (nrow(coverage_table) > 0) {
-    toJSON(coverage_table, auto_unbox = TRUE, pretty = TRUE)
+  outbreaks_json <- if (!is.null(outbreaks_summary$table) && nrow(outbreaks_summary$table) > 0) {
+    toJSON(outbreaks_summary$table, auto_unbox = TRUE, pretty = TRUE)
   } else {
     "[]"
   }
 
   paste(
     "You are a healthcare emergency preparedness consultant.",
-    "Interpret the gap between plan coverage and local historical incident patterns.",
-    "Use FEMA disaster declarations and CDC notifiable disease patterns to highlight mismatches.",
+    "Interpret the gap between plan coverage and regional incident patterns.",
+    "Use FEMA disaster declarations, CDC notifiable disease patterns, and global outbreak trends to highlight mismatches.",
     "Return JSON only in the schema:",
     "{\"summary\":\"...\",\"gap_insights\":[{\"pattern\":\"...\",\"coverage\":\"present|partial|missing\",\"impact\":\"...\"}],\"recommended_focus\":[\"...\"]}",
     "\nPlan domain status:",
@@ -960,8 +1161,53 @@ build_regional_gap_prompt <- function(extraction, fema_summary, cdc_summary, cov
     fema_json,
     "\nCDC condition summary:",
     cdc_json,
-    "\nCoverage crosswalk:",
-    coverage_json
+    "\nGlobal outbreak summary:",
+    outbreaks_json
+  )
+}
+
+build_regional_recommendations_prompt <- function(plan_text, fema_summary, cdc_summary, outbreaks_summary, hazard_identified, framework_choice = "CDC PHEP") {
+  fema_json <- if (nrow(fema_summary$table) > 0) {
+    toJSON(fema_summary$table, auto_unbox = TRUE, pretty = TRUE)
+  } else {
+    "[]"
+  }
+
+  cdc_json <- if (nrow(cdc_summary$table) > 0) {
+    toJSON(cdc_summary$table, auto_unbox = TRUE, pretty = TRUE)
+  } else {
+    "[]"
+  }
+
+  outbreaks_json <- if (!is.null(outbreaks_summary$table) && nrow(outbreaks_summary$table) > 0) {
+    toJSON(outbreaks_summary$table, auto_unbox = TRUE, pretty = TRUE)
+  } else {
+    "[]"
+  }
+
+  hazards_json <- if (!is.null(hazard_identified) && nrow(hazard_identified) > 0) {
+    toJSON(hazard_identified, auto_unbox = TRUE, pretty = TRUE)
+  } else {
+    "[]"
+  }
+
+  paste(
+    "You are an emergency preparedness analyst.",
+    paste0("Use the selected framework: ", framework_choice, "."),
+    "Compare the plan text against regional hazards to identify what is missing or weak.",
+    "Return concise bullet-style recommendations (short phrases).",
+    "Return JSON only in the schema:",
+    "{\"recommendations\":[\"...\"]}",
+    "\nPlan text:\n",
+    plan_text,
+    "\nFEMA incident summary:",
+    fema_json,
+    "\nCDC condition summary:",
+    cdc_json,
+    "\nGlobal outbreak summary:",
+    outbreaks_json,
+    "\nIdentified hazards:",
+    hazards_json
   )
 }
 
@@ -972,6 +1218,7 @@ build_regional_analysis <- function(
   history_years,
   extraction,
   plan_text,
+  framework_choice,
   fema_types = c("DR", "EM"),
   incident_types = character(0)
 ) {
@@ -988,6 +1235,7 @@ build_regional_analysis <- function(
     history_years %||% "",
     paste(fema_types %||% "", collapse = ","),
     paste(incident_types %||% "", collapse = ","),
+    app_config$cdc_source %||% "wonder",
     sep = "|"
   )
 
@@ -1073,8 +1321,12 @@ build_regional_analysis <- function(
     cached_cdc
   } else {
     tryCatch(
-      fetch_cdc_nndss(region_state, years_back = max(3, history_years %/% 2)),
-      error = function(e) list(data = tibble::tibble(), cols = list(), note = "CDC data temporarily unavailable.")
+      fetch_cdc_nndss(region_state, years_back = max(1, history_years)),
+      error = function(e) list(
+        data = tibble::tibble(),
+        cols = list(),
+        note = paste0("CDC data temporarily unavailable. ", conditionMessage(e))
+      )
     )
   }
   if (!non_us && nzchar(region_state %||% "") && toupper(region_state) != "NA") {
@@ -1096,7 +1348,6 @@ build_regional_analysis <- function(
   }
   timing_mark("Outbreaks summary", t_outbreaks)
 
-  coverage_table <- build_coverage_table(fema_summary, cdc_summary, extraction)
   t_hazards <- Sys.time()
   hazard_table <- tryCatch(
     normalize_hazards(fema_summary, cdc_summary, outbreaks_summary),
@@ -1137,27 +1388,7 @@ build_regional_analysis <- function(
       select(hazard_type, hazard_label, source, frequency, recency_years, severity, last_year, priority, priority_score)
   }
   timing_mark("Hazard normalize+score", t_hazards)
-  t_llm <- Sys.time()
-  plan_key <- paste0("plan|", nchar(plan_text %||% ""), "|", substr(plan_text %||% "", 1, 120))
-  hazard_eval_key <- paste0("hazard_eval|", cache_key_base, "|", plan_key)
-  hazard_eval <- cache_get(hazard_eval_key, max_age_minutes = 360)
-  if (is.null(hazard_eval)) {
-    hazard_eval <- evaluate_hazard_coverage(plan_text, hazard_table, extraction$domains, max_n = 2)
-    cache_set(hazard_eval_key, hazard_eval)
-  }
-  timing_mark("Hazard LLM eval", t_llm)
   timing_mark("Regional analysis total", t0)
-
-  hazard_priority <- if (nrow(hazard_table) > 0) {
-    hazard_table |>
-      arrange(desc(priority_score)) |>
-      mutate(
-        priority_score = round(priority_score, 2)
-      ) |>
-      select(hazard_label, source, frequency, recency_years, severity, priority, priority_score)
-  } else {
-    tibble::tibble()
-  }
 
   hazard_identified <- if (nrow(hazard_table) > 0) {
     base <- hazard_table |>
@@ -1189,53 +1420,39 @@ build_regional_analysis <- function(
     tibble::tibble()
   }
 
-  hazard_domain_coverage <- if (length(hazard_eval) > 0) {
-    bind_rows(lapply(hazard_eval, function(h) {
-      observed <- h$observed %||% list()
-      if (length(observed) == 0) return(tibble::tibble())
-      tibble::tibble(
-        hazard = h$hazard %||% "Unknown",
-        priority = h$priority %||% "Unknown",
-        source = h$source %||% "Unknown",
-        domain = vapply(
-          observed,
-          function(o) {
-            if (!is.list(o)) return("Domain")
-            o$label %||% o$domain_id %||% "Domain"
-          },
-          character(1)
-        ),
-        status = vapply(
-          observed,
-          function(o) {
-            if (!is.list(o)) return("unknown")
-            o$status %||% "unknown"
-          },
-          character(1)
-        ),
-        rationale = vapply(
-          observed,
-          function(o) {
-            if (!is.list(o)) return("")
-            o$rationale %||% ""
-          },
-          character(1)
-        )
-      )
-    }))
-  } else {
-    tibble::tibble()
+  t_llm_recs <- Sys.time()
+  plan_key <- paste0("plan|", nchar(plan_text %||% ""), "|", substr(plan_text %||% "", 1, 120))
+  rec_key <- paste0("regional_recs|", cache_key_base, "|", plan_key)
+  regional_recommendations <- cache_get(rec_key, max_age_minutes = 360)
+  if (is.null(regional_recommendations)) {
+    prompt <- build_regional_recommendations_prompt(
+      plan_text,
+      fema_summary,
+      cdc_summary,
+      outbreaks_summary,
+      hazard_identified,
+      framework_choice
+    )
+    regional_recommendations <- tryCatch(
+      call_llm_json(
+        system_prompt = "You provide concise, plan-specific recommendations for regional hazards.",
+        user_prompt = prompt,
+        schema_hint = "regional_recommendations"
+      ),
+      error = function(e) NULL
+    )
+    if (is.null(regional_recommendations) || !is.list(regional_recommendations)) {
+      regional_recommendations <- list(recommendations = character(0))
+    }
+    cache_set(rec_key, regional_recommendations)
   }
+  timing_mark("Regional recommendations LLM", t_llm_recs)
 
   list(
     fema = fema_summary,
     cdc = cdc_summary,
-    coverage = coverage_table,
     outbreaks = outbreaks_summary,
-    hazards = hazard_table,
-    hazard_eval = hazard_eval,
-    hazard_priority = hazard_priority,
     hazard_identified = hazard_identified,
-    hazard_domain_coverage = hazard_domain_coverage
+    hazard_recommendations = regional_recommendations
   )
 }

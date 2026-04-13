@@ -64,97 +64,60 @@ format_exec_summary_narrative <- function(
   }
 
   score_text <- if (!is.null(final_score)) {
-    paste0("the overall preparedness score is ", round(final_score, 1))
+    paste0("Preparedness score: ", round(final_score, 1))
   } else {
-    "the overall preparedness score is unavailable"
+    "Preparedness score: unavailable"
   }
 
-  base_sentence <- paste0(
-    "For the ", facility_type, " with a ", tolower(emergency_focus),
-    " emergency focus, ", score_text, ", indicating that ",
-    if (!is.null(final_score) && final_score >= 80) {
-      "current preparedness is strong."
-    } else if (!is.null(final_score) && final_score >= 50) {
-      "there are moderate improvement needs."
-    } else if (!is.null(final_score)) {
-      "substantial improvement is needed."
-    } else {
-      "an overall assessment could not be completed."
-    }
-  )
+  readiness_text <- if (!is.null(final_score) && final_score >= 80) {
+    "Readiness is strong."
+  } else if (!is.null(final_score) && final_score >= 50) {
+    "Readiness is moderate with clear improvement needs."
+  } else if (!is.null(final_score)) {
+    "Readiness is low and needs significant improvement."
+  } else {
+    "Readiness could not be assessed."
+  }
 
-  domain_sentence <- paste0(
+  domain_summary <- paste0(
     if (!is.na(top_domain) && top_domain != "N/A") {
-      paste0(" The strongest area is ", top_domain, ".")
+      paste0("Strongest: ", top_domain, ". ")
     } else {
       ""
     },
     if (!is.na(lowest_domain) && lowest_domain != "N/A") {
-      paste0(" The area needing the most improvement is ", lowest_domain, ".")
+      paste0("Needs improvement: ", lowest_domain, ".")
     } else {
       ""
     }
   )
 
-  gap_sentence <- NULL
+  key_components <- character(0)
   if (length(gaps) == 0) {
-    gap_sentence <- "No major gaps were identified based on the current rule checks."
+    key_components <- character(0)
   } else if (is.character(gaps)) {
-    detail_map <- c(
-      "No Incident Command System defined" = "This suggests leadership roles and activation authority are unclear, which can slow decision-making during escalation.",
-      "Insufficient training and drills" = "This raises the risk of role confusion and inconsistent execution during a real event.",
-      "No backup power system identified" = "This creates vulnerability for critical operations, IT systems, and life-safety equipment during outages."
-    )
-    sentences <- vapply(
-      gaps,
-      function(gap) {
-        detail <- detail_map[[gap]]
-        if (is.null(detail)) {
-          detail <- "This indicates a weakness that could hinder coordinated response."
-        }
-        paste0(gap, ". ", detail)
-      },
-      character(1)
-    )
-    gap_sentence <- paste0("Key gaps include: ", paste(sentences, collapse = " "))
+    key_components <- gaps
   } else {
-    sentences <- vapply(
-      gaps,
-      function(gap) {
-        domain <- gap$domain %||% "Domain"
-        status <- gap$status %||% "unknown status"
-        evidence <- gap$evidence %||% "limited evidence"
-        components <- gap$components %||% character(0)
-        component_text <- if (length(components) > 0) {
-          paste0(" Components to strengthen: ", paste(components, collapse = ", "), ".")
-        } else {
-          ""
-        }
-        paste0(domain, " is currently ", status, ". Evidence includes ", evidence, ".", component_text)
-      },
-      character(1)
-    )
-    gap_sentence <- paste0("Key gaps include: ", paste(sentences, collapse = " "))
-  }
-
-  action_sentence <- NULL
-  if (length(actions) == 0) {
-    action_sentence <- "No immediate corrective actions were triggered by the rule set."
-  } else if (is.character(actions)) {
-    action_sentence <- paste0("Immediate priorities are to ", join_items(actions), ".")
-  } else {
-    if (!is.list(actions)) {
-      action_sentence <- paste0("Immediate priorities are to ", join_items(as.character(actions)), ".")
-      return(tags$p(paste(base_sentence, domain_sentence, gap_sentence, action_sentence)))
+    component_lists <- lapply(gaps, function(gap) gap$components %||% character(0))
+    key_components <- unique(unlist(component_lists))
+    if (length(key_components) == 0) {
+      key_components <- vapply(gaps, function(gap) gap$domain %||% "Domain", character(1))
     }
-    action_sentence <- paste0(
-      "Immediate priorities are to ",
-      join_items(vapply(actions, function(a) if (is.list(a)) a$recommendation %||% "" else "", character(1))),
-      "."
-    )
   }
+  key_components <- head(key_components[nzchar(key_components)], 5)
 
-  tags$p(paste(base_sentence, domain_sentence, gap_sentence, action_sentence))
+  tagList(
+    tags$p(paste(
+      "For the", facility_type, "(", tolower(emergency_focus), "focus).",
+      score_text, readiness_text, domain_summary
+    )),
+    if (length(key_components) > 0) {
+      tagList(
+        tags$p(strong("Key components to strengthen:")),
+        tags$ul(lapply(key_components, tags$li))
+      )
+    }
+  )
 }
 
 format_action_plan <- function(actions) {
@@ -164,39 +127,30 @@ format_action_plan <- function(actions) {
 
   if (is.character(actions) || !is.list(actions)) {
     if (!is.character(actions)) actions <- as.character(actions)
-    return(tagList(
-      lapply(actions, function(action) {
-        div(
-          class = "action-card",
-          h3("Recommended Action"),
-          p(action)
-        )
-      })
-    ))
+    short <- head(actions[nzchar(actions)], 5)
+    return(tags$ul(lapply(short, tags$li)))
   }
 
-  tagList(
-    lapply(actions, function(action) {
-      if (!is.list(action)) {
-        return(div(
-          class = "action-card",
-          h3("Recommended Action"),
-          p(as.character(action))
-        ))
-      }
-      div(
-        class = "action-card",
-        h3(action$domain %||% "Recommended Action"),
-        p(strong("Priority: "), action$priority %||% "Unknown"),
-        p(strong("Timeframe: "), action$timeframe %||% "Unspecified"),
-        p(action$recommendation %||% "")
-      )
-    })
-  )
+  items <- lapply(actions, function(action) {
+    if (!is.list(action)) return(as.character(action))
+    rec <- action$recommendation %||% ""
+    if (!nzchar(rec)) return("")
+    prefix <- action$priority %||% ""
+    if (nzchar(prefix)) {
+      paste0(prefix, ": ", rec)
+    } else {
+      rec
+    }
+  })
+  items <- head(items[nzchar(items)], 5)
+  if (length(items) == 0) {
+    return(tags$p("No recommendations available."))
+  }
+  tags$ul(lapply(items, tags$li))
 }
 
 format_regional_gap <- function(regional_gap) {
-  if (is.null(regional_gap) || length(regional_gap) == 0) {
+  if (is.null(regional_gap) || length(regional_gap) == 0 || !is.list(regional_gap)) {
     return(tags$p("Regional gap interpretation unavailable."))
   }
 
@@ -229,7 +183,7 @@ format_regional_gap <- function(regional_gap) {
 }
 
 format_hazard_analysis <- function(hazard_eval) {
-  if (is.null(hazard_eval) || length(hazard_eval) == 0) {
+  if (is.null(hazard_eval) || length(hazard_eval) == 0 || !is.list(hazard_eval)) {
     return(tags$p("Hazard prioritization unavailable for the selected region."))
   }
 
@@ -245,6 +199,7 @@ format_hazard_analysis <- function(hazard_eval) {
 
   tagList(
     lapply(hazard_eval, function(h) {
+      if (!is.list(h)) return(NULL)
       observed <- h$observed %||% list()
       expected_domains <- vapply(
         h$expected_domains %||% list(),
@@ -284,4 +239,17 @@ format_hazard_analysis <- function(hazard_eval) {
       )
     })
   )
+}
+
+format_hazard_recommendations <- function(recs) {
+  if (is.null(recs) || length(recs) == 0 || !is.list(recs)) {
+    return(tags$p("No hazard-based recommendations available."))
+  }
+
+  items <- recs$recommendations %||% character(0)
+  items <- head(items[nzchar(items)], 6)
+  if (length(items) == 0) {
+    return(tags$p("No hazard-based recommendations available."))
+  }
+  tags$ul(lapply(items, tags$li))
 }

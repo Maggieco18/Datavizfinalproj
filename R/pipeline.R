@@ -114,8 +114,37 @@ build_executive_summary_base <- function(facility_type, emergency_focus, domain_
   )
 }
 
-build_regional_gap_summary <- function(coverage_table) {
-  if (is.null(coverage_table) || nrow(coverage_table) == 0) {
+build_regional_gap_summary <- function(extraction, fema_summary, cdc_summary, outbreaks_summary) {
+  llm_available <- !is.null(app_config$llm_api_key) &&
+    nzchar(app_config$llm_api_key) &&
+    !is.null(app_config$llm_api_base) &&
+    nzchar(app_config$llm_api_base)
+
+  if (isTRUE(llm_available)) {
+    prompt <- build_regional_gap_prompt(
+      extraction,
+      fema_summary,
+      cdc_summary,
+      outbreaks_summary
+    )
+    llm_result <- tryCatch(
+      call_llm_json(
+        system_prompt = "You are an emergency preparedness analyst providing regional gap interpretation and recommendations.",
+        user_prompt = prompt,
+        schema_hint = "regional_gap"
+      ),
+      error = function(e) NULL
+    )
+    if (is.list(llm_result) && !is.null(llm_result$summary)) {
+      return(llm_result)
+    }
+  }
+
+  any_fema <- nrow(fema_summary$table %||% tibble::tibble()) > 0
+  any_cdc <- nrow(cdc_summary$table %||% tibble::tibble()) > 0
+  any_outbreaks <- nrow(outbreaks_summary$table %||% tibble::tibble()) > 0
+
+  if (!any_fema && !any_cdc && !any_outbreaks) {
     return(list(
       summary = "Regional coverage comparison unavailable due to limited incident data.",
       gap_insights = list(),
@@ -123,49 +152,18 @@ build_regional_gap_summary <- function(coverage_table) {
     ))
   }
 
-  focused <- coverage_table |>
-    filter(coverage %in% c("missing", "partial")) |>
-    arrange(coverage, desc(count)) |>
-    slice_head(n = 4)
-
-  if (nrow(focused) == 0) {
-    return(list(
-      summary = "Regional incident history does not show missing domain coverage based on the selected hazards.",
-      gap_insights = list(),
-      recommended_focus = list()
-    ))
-  }
-
-  gap_insights <- purrr::pmap(
-    focused,
-    function(source, event, count, coverage, domains, ...) {
-      list(
-        pattern = paste(source, "-", event),
-        coverage = coverage,
-        impact = if (coverage == "missing") {
-          paste0("Missing coverage for domains: ", domains, ".")
-        } else {
-          paste0("Partial coverage for domains: ", domains, ".")
-        }
-      )
-    }
-  )
-
-  focus <- focused |>
-    mutate(focus_item = paste0("Improve coverage for ", event, ".")) |>
-    pull(focus_item)
-
-  list(
-    summary = "Regional incident history highlights areas where plan coverage is weakest.",
-    gap_insights = gap_insights,
-    recommended_focus = focus
-  )
+  return(list(
+    summary = "Regional incident data is available; enable the LLM for AI-assisted gap interpretation and recommendations.",
+    gap_insights = list(),
+    recommended_focus = list()
+  ))
 }
 
 run_full_analysis <- function(
   plan_text,
   facility_type,
   emergency_focus,
+  framework_choice,
   region_country,
   region_state,
   region_county,
@@ -187,12 +185,19 @@ run_full_analysis <- function(
       !is.null(app_config$llm_api_base) &&
       nzchar(app_config$llm_api_base)) {
     llm_assessment <- tryCatch(
-      assess_plan_domains(plan_text, facility_type, emergency_focus),
+      assess_plan_domains(plan_text, facility_type, emergency_focus, framework_choice),
       error = function(e) {
         llm_error <<- conditionMessage(e)
         NULL
       }
     )
+
+    if (!is.null(llm_assessment)) {
+      fallback_notice <- attr(llm_assessment, "llm_fallback_notice")
+      if (!is.null(fallback_notice) && nzchar(fallback_notice)) {
+        llm_error <- fallback_notice
+      }
+    }
 
     if (!is.null(llm_assessment) && !is.list(llm_assessment)) {
       llm_error <- "LLM response parsing failed."
@@ -244,10 +249,16 @@ run_full_analysis <- function(
     history_years,
     list(domains = domain_status),
     plan_text,
+    framework_choice,
     fema_types,
     incident_types
   )
-  regional_gap <- build_regional_gap_summary(regional_analysis$coverage)
+  regional_gap <- build_regional_gap_summary(
+    list(domains = domain_status),
+    regional_analysis$fema,
+    regional_analysis$cdc,
+    regional_analysis$outbreaks
+  )
 
   list(
     features = features,
@@ -257,13 +268,17 @@ run_full_analysis <- function(
     action_plan = actions,
     executive_summary = executive_summary,
     llm = list(
-      used = !is.null(llm_assessment$domains) && length(llm_assessment$domains) > 0,
+      used = !is.null(llm_assessment$domains) &&
+        length(llm_assessment$domains) > 0 &&
+        is.null(llm_error),
       error = llm_error
     ),
     regional = list(
       fema = regional_analysis$fema,
       cdc = regional_analysis$cdc,
-      coverage = regional_analysis$coverage,
+      outbreaks = regional_analysis$outbreaks,
+      hazard_identified = regional_analysis$hazard_identified,
+      hazard_recommendations = regional_analysis$hazard_recommendations,
       gap = regional_gap
     )
   )

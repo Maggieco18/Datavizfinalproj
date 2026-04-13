@@ -38,7 +38,9 @@ call_llm_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
   )
 
   if (http_error(response)) {
-    stop("LLM request failed: ", content(response, as = "text"))
+    fallback <- mock_llm_response(schema_hint)
+    attr(fallback, "llm_fallback_notice") <- "LLM unavailable, using fallback."
+    return(fallback)
   }
 
   parsed <- content(response, as = "parsed", type = "application/json")
@@ -89,7 +91,9 @@ call_gemini_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
   )
 
   if (http_error(response)) {
-    stop("LLM request failed: ", content(response, as = "text"))
+    fallback <- mock_llm_response(schema_hint)
+    attr(fallback, "llm_fallback_notice") <- "LLM unavailable, using fallback."
+    return(fallback)
   }
 
   parsed <- content(response, as = "parsed", type = "application/json")
@@ -101,17 +105,23 @@ call_gemini_json <- function(system_prompt, user_prompt, schema_hint = NULL) {
     )
   }
   if (is.null(parsed) || !is.list(parsed)) {
-    return(mock_llm_response(schema_hint))
+    fallback <- mock_llm_response(schema_hint)
+    attr(fallback, "llm_fallback_notice") <- "LLM unavailable, using fallback."
+    return(fallback)
   }
 
   candidates <- parsed$candidates %||% list()
   if (length(candidates) == 0 || is.null(candidates[[1]]$content$parts)) {
-    return(mock_llm_response(schema_hint))
+    fallback <- mock_llm_response(schema_hint)
+    attr(fallback, "llm_fallback_notice") <- "LLM unavailable, using fallback."
+    return(fallback)
   }
 
   parts <- candidates[[1]]$content$parts
   if (is.null(parts) || length(parts) == 0) {
-    return(mock_llm_response(schema_hint))
+    fallback <- mock_llm_response(schema_hint)
+    attr(fallback, "llm_fallback_notice") <- "LLM unavailable, using fallback."
+    return(fallback)
   }
   message_content <- paste(vapply(parts, function(part) part$text %||% "", ""), collapse = "")
   safe_parse_json(message_content, schema_hint = schema_hint)
@@ -169,7 +179,16 @@ assess_hazard_coverage <- function(plan_text, hazard_label, hazard_type, expecte
   )
 }
 
-assess_plan_domains <- function(plan_text, facility_type, emergency_focus) {
+assess_plan_domains <- function(plan_text, facility_type, emergency_focus, framework_choice = "CDC PHEP") {
+  framework_label <- framework_choice %||% "CDC PHEP"
+  framework_text <- if (framework_label == "WHO ERF") {
+    "Align scoring to WHO Emergency Response Framework (ERF) and incident management best practices."
+  } else if (framework_label == "FEMA") {
+    "Align scoring to FEMA NIMS and core capability expectations."
+  } else {
+    "Align scoring to CDC PHEP capability expectations."
+  }
+
   prompt <- paste(
     "You are an expert emergency preparedness reviewer trained in FEMA NIMS, CDC PHEP, and WHO Emergency Response Framework (ERF) principles.",
     
@@ -188,7 +207,8 @@ assess_plan_domains <- function(plan_text, facility_type, emergency_focus) {
     "4 = Strong (well-defined and mostly complete)",
     "5 = Very Strong (comprehensive, clearly defined, and aligned with best practices)",
     
-    "Base all scoring on alignment with FEMA NIMS, CDC PHEP capabilities, and WHO ERF standards.",
+    framework_text,
+    "If the plan is not designed for the selected framework, evaluate its alignment gaps explicitly.",
     "Evaluate appropriately for the plan type (e.g., strategic framework vs operational plan). Do not penalize lack of tactical detail if the document is intended to be high-level.",
     
     "For each domain, provide detailed and traceable analysis:",
@@ -264,7 +284,9 @@ safe_parse_json <- function(text, schema_hint = NULL) {
   )
 
   if (is.null(parsed) || !is.list(parsed)) {
-    return(mock_llm_response(schema_hint))
+    fallback <- mock_llm_response(schema_hint)
+    attr(fallback, "llm_fallback_notice") <- "LLM unavailable, using fallback."
+    return(fallback)
   }
 
   parsed
@@ -372,6 +394,18 @@ mock_llm_response <- function(schema_hint = NULL) {
         "Expand continuity of operations procedures for utility and facility disruptions.",
         "Formalize surge staffing and just-in-time training for infectious disease events.",
         "Strengthen risk assessment updates tied to regional hazard trends."
+      )
+    ))
+  }
+
+  if (identical(schema_hint, "regional_recommendations")) {
+    return(list(
+      recommendations = c(
+        "Clarify hazard-specific triggers and activation thresholds.",
+        "Define surge staffing and cross-training for outbreak response.",
+        "Add supply chain contingencies for high-frequency events.",
+        "Document continuity of operations for essential services.",
+        "Update risk assessment based on recent regional incidents."
       )
     ))
   }
